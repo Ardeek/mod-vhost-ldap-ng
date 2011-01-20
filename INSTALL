@@ -1,0 +1,10 @@
+Just run "make" to build the module and "make install" (as root) to install
+the module. This will use Apache's apxs to build/install from source.
+
+Have a look at vhost_ldap.conf to learn about configuration.
+
+Your LDAP server needs to include mod_vhost_ldap.schema. If you do not use
+OpenLDAP you are on your own to build a schema.
+
+You should configure the LDAP server to maintain indices on apacheServerName,
+apacheServerAlias and anything you use in your additional search filter.

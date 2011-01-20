@@ -17,8 +17,12 @@
  */
 
 /*
- * mod_vhost_ldap.c --- read virtual host config from LDAP directory
+ * mod_vhost_ldap_ng.c --- read virtual host config from LDAP directory
  */
+/*
+ * mod_vhost_ldap_ng.c is a fork() of mod_vhost_ldap.c (Refer to: http://modvhostldap.alioth.debian.org/)
+ */
+
 
 #define CORE_PRIVATE
 
