@@ -61,7 +61,7 @@
 
 #define MAX_FAILURES 5
 
-module AP_MODULE_DECLARE_DATA vhost_ldap_module;
+module AP_MODULE_DECLARE_DATA vhost_ldap_module_ng;
 
 typedef enum {
 	MVL_UNSET, MVL_DISABLED, MVL_ENABLED
@@ -233,7 +233,7 @@ static const char *mod_vhost_ldap_parse_url(cmd_parms *cmd,
 #endif
 
 	mod_vhost_ldap_config_t *conf =
-	(mod_vhost_ldap_config_t *)ap_get_module_config(cmd->server->module_config, &vhost_ldap_module);
+	(mod_vhost_ldap_config_t *)ap_get_module_config(cmd->server->module_config, &vhost_ldap_module_ng);
 
 	ap_log_error(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0,
 		cmd->server, "[mod_vhost_ldap.c] url parse: `%s'", url);
@@ -333,7 +333,7 @@ static const char *mod_vhost_ldap_parse_url(cmd_parms *cmd,
 static const char *mod_vhost_ldap_set_enabled(cmd_parms *cmd, void *dummy, int enabled)
 {
 	mod_vhost_ldap_config_t *conf =
-	(mod_vhost_ldap_config_t *)ap_get_module_config(cmd->server->module_config,	&vhost_ldap_module);
+	(mod_vhost_ldap_config_t *)ap_get_module_config(cmd->server->module_config,	&vhost_ldap_module_ng);
 	conf->enabled = (enabled) ? MVL_ENABLED : MVL_DISABLED;
 	return NULL;
 }
@@ -342,7 +342,7 @@ static const char *mod_vhost_ldap_set_rootdir(cmd_parms *cmd, void *dummy, const
 {
     int len = 0;
 	mod_vhost_ldap_config_t *conf =
-		(mod_vhost_ldap_config_t *)ap_get_module_config(cmd->server->module_config, &vhost_ldap_module);
+		(mod_vhost_ldap_config_t *)ap_get_module_config(cmd->server->module_config, &vhost_ldap_module_ng);
 	len = strlen(rootdir);
 	if(strcmp(rootdir+len-1, "/") != 0)
 		rootdir = strcat((char *)rootdir, "/");
@@ -353,7 +353,7 @@ static const char *mod_vhost_ldap_set_rootdir(cmd_parms *cmd, void *dummy, const
 static const char *mod_vhost_ldap_set_binddn(cmd_parms *cmd, void *dummy, const char *binddn)
 {
 	mod_vhost_ldap_config_t *conf =
-	(mod_vhost_ldap_config_t *)ap_get_module_config(cmd->server->module_config, &vhost_ldap_module);
+	(mod_vhost_ldap_config_t *)ap_get_module_config(cmd->server->module_config, &vhost_ldap_module_ng);
 	conf->binddn = apr_pstrdup(cmd->pool, binddn);
 	return NULL;
 }
@@ -361,7 +361,7 @@ static const char *mod_vhost_ldap_set_binddn(cmd_parms *cmd, void *dummy, const 
 static const char *mod_vhost_ldap_set_bindpw(cmd_parms *cmd, void *dummy, const char *bindpw)
 {
 	mod_vhost_ldap_config_t *conf =
-	(mod_vhost_ldap_config_t *)ap_get_module_config(cmd->server->module_config,	&vhost_ldap_module);
+	(mod_vhost_ldap_config_t *)ap_get_module_config(cmd->server->module_config,	&vhost_ldap_module_ng);
 	conf->bindpw = apr_pstrdup(cmd->pool, bindpw);
 	return NULL;
 }
@@ -369,7 +369,7 @@ static const char *mod_vhost_ldap_set_bindpw(cmd_parms *cmd, void *dummy, const 
 static const char *mod_vhost_ldap_set_deref(cmd_parms *cmd, void *dummy, const char *deref)
 {
 	mod_vhost_ldap_config_t *conf = 
-	(mod_vhost_ldap_config_t *)ap_get_module_config (cmd->server->module_config, &vhost_ldap_module);
+	(mod_vhost_ldap_config_t *)ap_get_module_config (cmd->server->module_config, &vhost_ldap_module_ng);
 
 	if (strcmp(deref, "never") == 0 || strcasecmp(deref, "off") == 0) {
 		conf->deref = never;
@@ -392,7 +392,7 @@ static const char *mod_vhost_ldap_set_deref(cmd_parms *cmd, void *dummy, const c
 static const char *mod_vhost_ldap_set_fallback(cmd_parms *cmd, void *dummy, const char *fallback)
 {
 	mod_vhost_ldap_config_t *conf =
-	(mod_vhost_ldap_config_t *)ap_get_module_config(cmd->server->module_config, &vhost_ldap_module);
+	(mod_vhost_ldap_config_t *)ap_get_module_config(cmd->server->module_config, &vhost_ldap_module_ng);
 	conf->fallback = apr_pstrdup(cmd->pool, fallback);
 	return NULL;
 }
@@ -438,7 +438,7 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 	const char **vals = NULL;
 	char filtbuf[FILTER_LENGTH];
 	mod_vhost_ldap_config_t *conf =
-	(mod_vhost_ldap_config_t *)ap_get_module_config(r->server->module_config, &vhost_ldap_module);
+	(mod_vhost_ldap_config_t *)ap_get_module_config(r->server->module_config, &vhost_ldap_module_ng);
 	core_server_config *core =
 		(core_server_config *)ap_get_module_config(r->server->module_config, &core_module);
 	util_ldap_connection_t *ldc = NULL;
@@ -456,7 +456,7 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 	(mod_vhost_ldap_request_t *)apr_pcalloc(r->pool, sizeof(mod_vhost_ldap_request_t));
 	memset(reqc, 0, sizeof(mod_vhost_ldap_request_t)); 
 
-	ap_set_module_config(r->request_config, &vhost_ldap_module, reqc);
+	ap_set_module_config(r->request_config, &vhost_ldap_module_ng, reqc);
 
 	// mod_vhost_ldap is disabled or we don't have LDAP Url
 	if ((conf->enabled != MVL_ENABLED)||(!conf->have_ldap_url)) {
@@ -715,10 +715,10 @@ static ap_unix_identity_t *mod_vhost_ldap_get_suexec_id_doer(const request_rec *
 	ap_unix_identity_t *ugid = NULL;
 	mod_vhost_ldap_config_t *conf = 
 			(mod_vhost_ldap_config_t *)ap_get_module_config(r->server->module_config,
-			&vhost_ldap_module);
+			&vhost_ldap_module_ng);
 	mod_vhost_ldap_request_t *req =
 			(mod_vhost_ldap_request_t *)ap_get_module_config(r->request_config,
-			&vhost_ldap_module);
+			&vhost_ldap_module_ng);
 
 	uid_t uid = -1;
 	gid_t gid = -1;
@@ -769,7 +769,7 @@ mod_vhost_ldap_register_hooks (apr_pool_t * p)
 #endif
 }
 
-module AP_MODULE_DECLARE_DATA vhost_ldap_module = {
+module AP_MODULE_DECLARE_DATA vhost_ldap_module_ng = {
 	STANDARD20_MODULE_STUFF,
 	NULL,
 	NULL,

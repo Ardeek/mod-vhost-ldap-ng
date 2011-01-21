@@ -1,6 +1,9 @@
- mod-vhost-ldap is Apache 2.x module for storing and configuring
+ mod-vhost-ldap-ng is Apache 2.x module for storing and configuring
  Virtual Hosts from LDAP.  It supports DocumentRoot, ScriptAlias,
  ServerName, ServerAlias, ServerAdmin and SuexecUserGroup directives.
- .
- It's build on top of mod_ldap, so it uses it's caching capabilities
+ 
+It's build on top of mod_ldap, so it uses it's caching capabilities
  and can be used with threaded apache.
+
+This module is a fork of mod-vhost-ldap (http://modvhostldap.alioth.debian.org/)
+to implements new functionalities to make it more flexible for ISP environments.
