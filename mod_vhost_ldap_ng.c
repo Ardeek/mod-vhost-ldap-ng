@@ -90,7 +90,7 @@ typedef struct mod_vhost_ldap_config_t {
 
 	char *fallback;                     /* Fallback virtual host */
 	char *rootdir;
-
+	
 } mod_vhost_ldap_config_t;
 
 typedef struct mod_vhost_ldap_request_t {
@@ -101,7 +101,15 @@ typedef struct mod_vhost_ldap_request_t {
 	char *cgiroot;			/* ScriptAlias */
 	char *uid;				/* Suexec Uid */
 	char *gid;				/* Suexec Gid */
+	apr_array_header_t *aliases;
+	apr_array_header_t *redirects;
+
 } mod_vhost_ldap_request_t;
+
+typedef struct alias_t {
+	char *src;
+	char *dst;
+} alias_t;
 
 char *attributes[] =
 	{ "apacheServerName", "apacheDocumentRoot", "apacheScriptAlias", "apacheSuexecUid", "apacheSuexecGid", "apacheServerAdmin", 0 };
@@ -451,6 +459,9 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 	int sleep1 = 1;
 	int sleep;
 	struct berval hostnamebv, shostnamebv;
+#ifdef DEBUG
+	FILE *myfp = fopen("/var/log/apache2/vhostldap.debug", "w");
+#endif
 	reqc =
 	(mod_vhost_ldap_request_t *)apr_pcalloc(r->pool, sizeof(mod_vhost_ldap_request_t));
 	memset(reqc, 0, sizeof(mod_vhost_ldap_request_t)); 
@@ -543,10 +554,14 @@ null:
 
 	/* mark the user and DN */
 	reqc->dn = apr_pstrdup(r->pool, dn);
-
-	/* Optimize */
+	reqc->aliases = (apr_array_header_t *)apr_array_make(r->pool, 1, sizeof(alias_t));
+	reqc->redirects = (apr_array_header_t *)apr_array_make(r->pool, 1, sizeof(alias_t));
+	
 	if (vals) {
 		int i = 0;
+		char *tok;
+		alias_t *el;
+
 		while (attributes[i]) {
 			if (strcasecmp (attributes[i], "apacheServerName") == 0) {
 				reqc->name = apr_pstrdup (r->pool, vals[i]);
@@ -555,7 +570,15 @@ null:
 			} else if (strcasecmp (attributes[i], "apacheDocumentRoot") == 0) {
 				reqc->docroot = apr_pstrdup (r->pool, vals[i]);
 			} else if (strcasecmp (attributes[i], "apacheScriptAlias") == 0) {
-				reqc->cgiroot = apr_pstrdup (r->pool, vals[i]);
+				tok = NULL;
+				el = apr_array_push(reqc->aliases);
+				el->src = apr_strtok((char *)vals[i] , " ", &tok);
+				el->dst = apr_strtok(NULL, " ", &tok);
+			} else if (strcasecmp (attributes[i], "apacheAlias") == 0) {
+				tok = NULL;
+				el = apr_array_push(reqc->aliases);
+				el->src = apr_strtok((char *)vals[i] , " ", &tok);
+				el->dst = apr_strtok(NULL, " ", &tok);
 			} else if (strcasecmp (attributes[i], "apacheSuexecUid") == 0) {
 				reqc->uid = apr_pstrdup(r->pool, vals[i]);
 			} else if (strcasecmp (attributes[i], "apacheSuexecGid") == 0) {
@@ -581,9 +604,6 @@ null:
 			"translate failed; ServerName or DocumentRoot not defined");
 		return HTTP_INTERNAL_SERVER_ERROR;
 	}
-#ifdef DEBUG
-	FILE *myfp = fopen("/var/www/looog", "w");
-#endif
 	cgi = NULL;
 
 	if (reqc->cgiroot) {
@@ -604,7 +624,16 @@ null:
 		fwrite( alias , strlen( alias ), 1, myfp);
 		fwrite("\n", strlen("\n"), 1, myfp);
 		*/
-		cgi = strstr(r->uri, "cgi-bin/");
+		int k = 0;
+		alias_t *el;
+		while(k < reqc->aliases->nelts){
+			el = (alias_t *)&reqc->aliases->elts[k];
+			cgi = strstr(el->src, r->uri);
+			if(cgi)
+				break;
+			k++;
+		}
+		//cgi = strstr(r->uri, "cgi-bin/");
 #ifdef DEBUG
 		fwrite("cgi: ", strlen("cgi: "), 1, myfp);
 		fwrite(cgi,strlen(cgi) , 1, myfp);
