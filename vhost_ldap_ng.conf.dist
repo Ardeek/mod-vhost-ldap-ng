@@ -1,0 +1,7 @@
+<IfModule mod_vhost_ldap.c>
+        VhostLDAPEnabled on
+        VhostLDAPUrl  "ldap://127.0.0.1/ou=domains,dc=example,dc=com??one?apacheVhostenabled=yes"
+        VhostLdapBindDN "cn=admin,dc=example,dc=com"
+        VhostLDAPBindPassword "secret"
+        VhostLDapRootDir "/var/www"
+</IfModule>

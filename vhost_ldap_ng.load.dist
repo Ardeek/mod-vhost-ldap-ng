@@ -1,0 +1,1 @@
+LoadModule vhost_ldap_ng_module /usr/lib/apache2/modules/mod_vhost_ldap_ng.so
