@@ -136,6 +136,32 @@ static void ImportULDAPOptFn(void)
 	util_ldap_ssl_supported     = APR_RETRIEVE_OPTIONAL_FN(uldap_ssl_supported);
 }
 #endif 
+//From mod_alias
+static int alias_matches(const char *uri, const char *alias_fakename)
+{
+    const char *aliasp = alias_fakename, *urip = uri;
+
+    while (*aliasp) {
+        if (*aliasp == '/') {
+            if (*urip != '/')
+                return 0;
+
+            do {
+                ++aliasp;
+            } while (*aliasp == '/');
+            do {
+                ++urip;
+            } while (*urip == '/');
+        }
+        else {
+            if (*urip++ != *aliasp++)
+                return 0;
+        }
+    }
+    if (aliasp[-1] != '/' && *urip != '\0' && *urip != '/')
+        return 0;
+    return urip - uri;
+}
 
 static int mod_vhost_ldap_post_config(apr_pool_t *p, apr_pool_t *plog, apr_pool_t *ptemp, server_rec *s)
 {
@@ -459,8 +485,10 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 	int sleep1 = 1;
 	int sleep;
 	struct berval hostnamebv, shostnamebv;
+	alias_t *alias;
+	int hascgi = 0;
 #ifdef DEBUG
-	FILE *myfp = fopen("/var/log/apache2/vhostldap.debug", "w");
+	FILE *myfp = fopen("/var/www/vhostldap.debug", "a+");
 #endif
 	reqc =
 	(mod_vhost_ldap_request_t *)apr_pcalloc(r->pool, sizeof(mod_vhost_ldap_request_t));
@@ -559,9 +587,7 @@ null:
 	
 	if (vals) {
 		int i = 0;
-		char *tok;
-		alias_t *el;
-
+		char *tok, tmp[200];
 		while (attributes[i]) {
 			if (strcasecmp (attributes[i], "apacheServerName") == 0) {
 				reqc->name = apr_pstrdup (r->pool, vals[i]);
@@ -570,15 +596,25 @@ null:
 			} else if (strcasecmp (attributes[i], "apacheDocumentRoot") == 0) {
 				reqc->docroot = apr_pstrdup (r->pool, vals[i]);
 			} else if (strcasecmp (attributes[i], "apacheScriptAlias") == 0) {
+				strcpy(tmp, vals[i]);
 				tok = NULL;
-				el = apr_array_push(reqc->aliases);
-				el->src = apr_strtok((char *)vals[i] , " ", &tok);
-				el->dst = apr_strtok(NULL, " ", &tok);
+				alias = apr_array_push(reqc->aliases);
+				alias->src = apr_strtok((char *)tmp , " ", &tok);
+				alias->dst = apr_strtok(NULL, " ", &tok);
+				/*fwrite("SRC: ", strlen("SRC:"), 1, myfp);
+				fwrite(str1, strlen(str1), 1, myfp);
+				fwrite("\n", strlen("\n"), 1, myfp);	
+				fwrite("DST: ", strlen("DST:"), 1, myfp);
+				fwrite(str2, strlen(str2), 1, myfp);
+				fwrite("\n", strlen("\n"), 1, myfp);	
+				*/
+				hascgi = 1;
 			} else if (strcasecmp (attributes[i], "apacheAlias") == 0) {
 				tok = NULL;
-				el = apr_array_push(reqc->aliases);
-				el->src = apr_strtok((char *)vals[i] , " ", &tok);
-				el->dst = apr_strtok(NULL, " ", &tok);
+				alias = apr_array_push(reqc->aliases);
+				alias->src = apr_strtok((char *)vals[i] , " ", &tok);
+				alias->dst = apr_strtok(NULL, " ", &tok);
+				hascgi = 1;
 			} else if (strcasecmp (attributes[i], "apacheSuexecUid") == 0) {
 				reqc->uid = apr_pstrdup(r->pool, vals[i]);
 			} else if (strcasecmp (attributes[i], "apacheSuexecGid") == 0) {
@@ -587,7 +623,7 @@ null:
 			i++;
 		}
 	}
-
+/*
 	ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
 		"[mod_vhost_ldap.c]: loaded from ldap: "
 		"apacheServerName: %s, "
@@ -605,48 +641,38 @@ null:
 		return HTTP_INTERNAL_SERVER_ERROR;
 	}
 	cgi = NULL;
+*/	
 
-	if (reqc->cgiroot) {
-		/*int i = 0;
-		while(i<strlen(reqc->cgiroot)){
-			if(strncmp(" ", reqc->cgiroot + i,1) == 0)
-				break;
-			i++;
-		}	
-		alias = strndup(reqc->cgiroot, i);
-		cgiroot = strndup(reqc->cgiroot + i, strlen(reqc->cgiroot)-i);
-		for(i=0; i<strlen(cgiroot); i++){
-			if(strncmp(cgiroot+i, " ",1)!=0)
-			break;
-		}
-		cgiroot = strndup(cgiroot +i, strlen(cgiroot)-i);
-		fwrite( "alias: ", strlen("alias: "),1 , myfp);
-		fwrite( alias , strlen( alias ), 1, myfp);
-		fwrite("\n", strlen("\n"), 1, myfp);
-		*/
+	fwrite("Riga 650\n", strlen("Riga 650\n"), 1, myfp);
+	if (hascgi) {
+		hascgi = 0;
 		int k = 0;
-		alias_t *el;
-		while(k < reqc->aliases->nelts){
-			el = (alias_t *)&reqc->aliases->elts[k];
-			cgi = strstr(el->src, r->uri);
-			if(cgi)
+		//From mod_alias
+		if (r->uri[0] != '/' && r->uri[0] != '\0') 
+			return DECLINED;
+
+		fwrite("Riga 651\n", strlen("Riga 651\n"), 1, myfp);
+		while(k < reqc->aliases->nelts ){
+			alias = (alias_t *)&reqc->aliases->elts[k];
+			fwrite("uri: ", strlen("uri: "), 1, myfp);
+			fwrite(r->uri, strlen(r->uri), 1, myfp);
+			fwrite("\n", strlen("\n"), 1, myfp);
+			fwrite("alias source: ", strlen("alias source: "), 1, myfp);
+			fwrite(alias->src , strlen(alias->src), 1, myfp);
+			fwrite("\n", strlen("\n"), 1, myfp);
+			hascgi = alias_matches(r->uri, alias->src);
+			if(hascgi > 0)
 				break;
 			k++;
 		}
+		
 		//cgi = strstr(r->uri, "cgi-bin/");
-#ifdef DEBUG
-		fwrite("cgi: ", strlen("cgi: "), 1, myfp);
-		fwrite(cgi,strlen(cgi) , 1, myfp);
-		fwrite("\n", strlen("\n"), 1, myfp);
-	
-		fwrite("numero: ", strlen("numero: "), 1, myfp);
-		fwrite( r->uri + strspn(r->uri, "/") , strlen( r->uri + strspn(r->uri, "/") ) , 1, myfp);
-		fwrite("\n", strlen("\n"), 1, myfp);
-#endif
+
 	}
-	if (cgi) {
+	if (hascgi) {
+		fwrite("Riga 652\n", strlen("Riga 652\n"), 1, myfp);
 		/* Set exact filename for CGI script */
-		cgi = apr_pstrcat(r->pool, reqc->cgiroot, cgi + strlen("cgi-bin"), NULL);
+		cgi = apr_pstrcat(r->pool, alias->dst, r->uri + strlen(alias->src), NULL);
 
 		if ((cgi = ap_server_root_relative(r->pool, cgi))) {
 			ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
@@ -656,13 +682,11 @@ null:
 			//r->handler = "cgi-script";
 			r->handler = "Script";
 			apr_table_setn(r->notes, "alias-forced-type", r->handler);
-#ifdef DEBUG
-			fwrite("cgi2: ", strlen("cgi2: "), 1, myfp);
-			fwrite(cgi,strlen(cgi) , 1, myfp);
-#endif
 			return OK;
 		}
 		
+		fclose(myfp);
+		return OK;
 	} else if (r->uri[0] == '/') {
 		/* we don't set r->filename here, and let other modules do it
 		* this allows other modules (mod_rewrite.c) to work as usual
@@ -672,9 +696,6 @@ null:
 		/* We don't handle non-file requests here */
 		return DECLINED;
 	}
-#ifdef DEBUG
-	fclose(myfp);
-#endif
 	if ((r->server = apr_pmemdup(r->pool, r->server, sizeof(*r->server))) == NULL) {
 		ap_log_rerror(APLOG_MARK, APLOG_ERR|APLOG_NOERRNO, 0, r, 
 			"[mod_vhost_ldap.c] translate: "
@@ -729,8 +750,9 @@ null:
 		if(strcmp(r->handler, "Script") == 0)
 			return OK;
 
-	    }
-	
+	}
+
+	fclose(myfp);
 	/* Hack to allow post-processing by other modules (mod_rewrite, mod_alias) */
 	return DECLINED;
 }
