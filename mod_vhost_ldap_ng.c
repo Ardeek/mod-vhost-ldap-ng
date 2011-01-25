@@ -600,7 +600,7 @@ null:
 				reqc->docroot = apr_pstrdup (r->pool, vals[i]);
 			} else if (strcasecmp (attributes[i], "apacheScriptAlias") == 0) {
 				cur = strstr(vals[i], " ");
-				if(cur - vals[i] > 2 ){
+				if(cur - vals[i] > 1 ){
 					tmp = apr_palloc(r->pool, sizeof(char)*strlen(vals[i]));
 					strcpy(tmp, vals[i]);
 					tok = NULL;
@@ -609,10 +609,12 @@ null:
 					alias->dst = apr_strtok(NULL, " ", &tok);
 					alias->iscgi = 1;
 					isalias = 1;
-				}
+				}else
+					ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
+				                "[mod_vhost_ldap_ng.c]: Wrong apacheScriptAlias paramter: %s", vals[i]);
 			} else if (strcasecmp (attributes[i], "apacheAlias") == 0) {
 				cur = strstr(vals[i], " ");
-                                if(cur - vals[i] > 2 ){
+                                if(cur - vals[i] > 1 ){
                                         tmp = apr_palloc(r->pool, sizeof(char)*strlen(vals[i]));
                                         strcpy(tmp, vals[i]);
 					tok = NULL;
@@ -621,7 +623,9 @@ null:
 					alias->dst = apr_strtok(NULL, " ", &tok);
 					alias->iscgi = 0;
 					isalias = 1;
-				}
+				}else
+					ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
+                                                "[mod_vhost_ldap_ng.c]: Wrong apacheAlias parameter: %s", vals[i]);
 			} else if (strcasecmp (attributes[i], "apacheSuexecUid") == 0) {
 				reqc->uid = apr_pstrdup(r->pool, vals[i]);
 			} else if (strcasecmp (attributes[i], "apacheSuexecGid") == 0) {
@@ -664,11 +668,13 @@ null:
 		/* Set exact filename for CGI script */
 		realfile = apr_pstrcat(r->pool, alias->dst, r->uri + strlen(alias->src), NULL);
 
+		if(conf->rootdir)
+			realfile = apr_pstrcat(r->pool, conf->rootdir, realfile, NULL);
+		
 		if ((realfile = ap_server_root_relative(r->pool, realfile))) {
 			ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
 				"[mod_vhost_ldap.c]: ap_document_root is: %s",
 				ap_document_root(r));
-			
 			r->filename = realfile;
 			if(alias->iscgi){
 				//r->handler = "cgi-script";
