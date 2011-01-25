@@ -109,6 +109,7 @@ typedef struct mod_vhost_ldap_request_t {
 typedef struct alias_t {
 	char *src;
 	char *dst;
+	int iscgi;
 } alias_t;
 
 char *attributes[] =
@@ -178,7 +179,7 @@ static int mod_vhost_ldap_post_config(apr_pool_t *p, apr_pool_t *plog, apr_pool_
 			"Module mod_ldap missing. Mod_ldap (aka. util_ldap) "
 			"must be loaded in order for mod_vhost_ldap to function properly");
 		return HTTP_INTERNAL_SERVER_ERROR;
-    }
+    	}
 
 	ap_add_version_component(p, MOD_VHOST_LDAP_VERSION);
 
@@ -478,7 +479,7 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 	util_ldap_connection_t *ldc = NULL;
 	int result = 0;
 	const char *dn = NULL;
-	char *cgi;
+	char *realfile;
 	const char *hostname = NULL;
 	int is_fallback = 0;
 	int sleep0 = 0;
@@ -486,7 +487,7 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 	int sleep;
 	struct berval hostnamebv, shostnamebv;
 	alias_t *alias;
-	int hascgi = 0;
+	int isalias = 0;
 #ifdef DEBUG
 	FILE *myfp = fopen("/var/www/vhostldap.debug", "a+");
 #endif
@@ -498,6 +499,8 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 
 	// mod_vhost_ldap is disabled or we don't have LDAP Url
 	if ((conf->enabled != MVL_ENABLED)||(!conf->have_ldap_url)) {
+		fwrite("vhost ldap disabled\n", strlen("vhost ldap disabled\n"), 1, myfp);
+		fclose(myfp);
 		return DECLINED;
 	}
 
@@ -587,7 +590,7 @@ null:
 	
 	if (vals) {
 		int i = 0;
-		char *tok, tmp[200];
+		char *tok, *tmp, *cur;
 		while (attributes[i]) {
 			if (strcasecmp (attributes[i], "apacheServerName") == 0) {
 				reqc->name = apr_pstrdup (r->pool, vals[i]);
@@ -596,25 +599,29 @@ null:
 			} else if (strcasecmp (attributes[i], "apacheDocumentRoot") == 0) {
 				reqc->docroot = apr_pstrdup (r->pool, vals[i]);
 			} else if (strcasecmp (attributes[i], "apacheScriptAlias") == 0) {
-				strcpy(tmp, vals[i]);
-				tok = NULL;
-				alias = apr_array_push(reqc->aliases);
-				alias->src = apr_strtok((char *)tmp , " ", &tok);
-				alias->dst = apr_strtok(NULL, " ", &tok);
-				/*fwrite("SRC: ", strlen("SRC:"), 1, myfp);
-				fwrite(str1, strlen(str1), 1, myfp);
-				fwrite("\n", strlen("\n"), 1, myfp);	
-				fwrite("DST: ", strlen("DST:"), 1, myfp);
-				fwrite(str2, strlen(str2), 1, myfp);
-				fwrite("\n", strlen("\n"), 1, myfp);	
-				*/
-				hascgi = 1;
+				cur = strstr(vals[i], " ");
+				if(cur - vals[i] > 2 ){
+					tmp = apr_palloc(r->pool, sizeof(char)*strlen(vals[i]));
+					strcpy(tmp, vals[i]);
+					tok = NULL;
+					alias = apr_array_push(reqc->aliases);
+					alias->src = apr_strtok((char *)tmp , " ", &tok);
+					alias->dst = apr_strtok(NULL, " ", &tok);
+					alias->iscgi = 1;
+					isalias = 1;
+				}
 			} else if (strcasecmp (attributes[i], "apacheAlias") == 0) {
-				tok = NULL;
-				alias = apr_array_push(reqc->aliases);
-				alias->src = apr_strtok((char *)vals[i] , " ", &tok);
-				alias->dst = apr_strtok(NULL, " ", &tok);
-				hascgi = 1;
+				cur = strstr(vals[i], " ");
+                                if(cur - vals[i] > 2 ){
+                                        tmp = apr_palloc(r->pool, sizeof(char)*strlen(vals[i]));
+                                        strcpy(tmp, vals[i]);
+					tok = NULL;
+					alias = apr_array_push(reqc->aliases);
+					alias->src = apr_strtok((char *)vals[i] , " ", &tok);
+					alias->dst = apr_strtok(NULL, " ", &tok);
+					alias->iscgi = 0;
+					isalias = 1;
+				}
 			} else if (strcasecmp (attributes[i], "apacheSuexecUid") == 0) {
 				reqc->uid = apr_pstrdup(r->pool, vals[i]);
 			} else if (strcasecmp (attributes[i], "apacheSuexecGid") == 0) {
@@ -623,16 +630,15 @@ null:
 			i++;
 		}
 	}
-/*
+
 	ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
 		"[mod_vhost_ldap.c]: loaded from ldap: "
 		"apacheServerName: %s, "
 		"apacheServerAdmin: %s, "
 		"apacheDocumentRoot: %s, "
-		"apacheScriptAlias: %s, "
 		"apacheSuexecUid: %s, "
 		"apacheSuexecGid: %s",
-		reqc->name, reqc->admin, reqc->docroot, reqc->cgiroot, reqc->uid, reqc->gid);
+		reqc->name, reqc->admin, reqc->docroot, reqc->uid, reqc->gid);
 
 	if ((reqc->name == NULL)||(reqc->docroot == NULL)) {
 		ap_log_rerror(APLOG_MARK, APLOG_ERR|APLOG_NOERRNO, 0, r, 
@@ -640,48 +646,35 @@ null:
 			"translate failed; ServerName or DocumentRoot not defined");
 		return HTTP_INTERNAL_SERVER_ERROR;
 	}
-	cgi = NULL;
-*/	
-
-	fwrite("Riga 650\n", strlen("Riga 650\n"), 1, myfp);
-	if (hascgi) {
-		hascgi = 0;
+	if (isalias) {
+		isalias = 0;
 		int k = 0;
 		//From mod_alias
 		if (r->uri[0] != '/' && r->uri[0] != '\0') 
 			return DECLINED;
-
-		fwrite("Riga 651\n", strlen("Riga 651\n"), 1, myfp);
 		while(k < reqc->aliases->nelts ){
 			alias = (alias_t *)&reqc->aliases->elts[k];
-			fwrite("uri: ", strlen("uri: "), 1, myfp);
-			fwrite(r->uri, strlen(r->uri), 1, myfp);
-			fwrite("\n", strlen("\n"), 1, myfp);
-			fwrite("alias source: ", strlen("alias source: "), 1, myfp);
-			fwrite(alias->src , strlen(alias->src), 1, myfp);
-			fwrite("\n", strlen("\n"), 1, myfp);
-			hascgi = alias_matches(r->uri, alias->src);
-			if(hascgi > 0)
+			isalias = alias_matches(r->uri, alias->src);
+			if(isalias > 0)
 				break;
 			k++;
 		}
-		
-		//cgi = strstr(r->uri, "cgi-bin/");
-
 	}
-	if (hascgi) {
-		fwrite("Riga 652\n", strlen("Riga 652\n"), 1, myfp);
+	if (isalias) {
 		/* Set exact filename for CGI script */
-		cgi = apr_pstrcat(r->pool, alias->dst, r->uri + strlen(alias->src), NULL);
+		realfile = apr_pstrcat(r->pool, alias->dst, r->uri + strlen(alias->src), NULL);
 
-		if ((cgi = ap_server_root_relative(r->pool, cgi))) {
+		if ((realfile = ap_server_root_relative(r->pool, realfile))) {
 			ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
 				"[mod_vhost_ldap.c]: ap_document_root is: %s",
 				ap_document_root(r));
-			r->filename = cgi;
-			//r->handler = "cgi-script";
-			r->handler = "Script";
-			apr_table_setn(r->notes, "alias-forced-type", r->handler);
+			
+			r->filename = realfile;
+			if(alias->iscgi){
+				//r->handler = "cgi-script";
+				r->handler = "Script";
+				apr_table_setn(r->notes, "alias-forced-type", r->handler);
+			}
 			return OK;
 		}
 		
@@ -701,7 +694,7 @@ null:
 			"[mod_vhost_ldap.c] translate: "
 			"translate failed; Unable to copy r->server structure");
 		return HTTP_INTERNAL_SERVER_ERROR;
-    }
+	}
 
 	r->server->server_hostname = reqc->name;
 
@@ -723,7 +716,7 @@ null:
 			"[mod_vhost_ldap.c] translate: "
 			"translate failed; Unable to copy r->core structure");
 		return HTTP_INTERNAL_SERVER_ERROR;
-    }
+	}
 	ap_set_module_config(r->server->module_config, &core_module, core);
 
 	/* Stolen from server/core.c */
@@ -738,7 +731,8 @@ null:
 			"[mod_vhost_ldap.c] set_document_root: DocumentRoot must be a directory");
 		return HTTP_INTERNAL_SERVER_ERROR;
 	}
-		/* TODO: ap_configtestonly && ap_docrootcheck && */
+
+	/* TODO: ap_configtestonly && ap_docrootcheck && */
 	if (apr_filepath_merge((char**)&core->ap_document_root, NULL, reqc->docroot,
 			APR_FILEPATH_TRUENAME, r->pool) != APR_SUCCESS
 			|| !ap_is_directory(r->pool, reqc->docroot)) {
