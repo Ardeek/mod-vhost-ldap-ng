@@ -488,9 +488,6 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 	struct berval hostnamebv, shostnamebv;
 	alias_t *alias;
 	int isalias = 0;
-#ifdef DEBUG
-	FILE *myfp = fopen("/var/www/vhostldap.debug", "a+");
-#endif
 	reqc =
 	(mod_vhost_ldap_request_t *)apr_pcalloc(r->pool, sizeof(mod_vhost_ldap_request_t));
 	memset(reqc, 0, sizeof(mod_vhost_ldap_request_t)); 
@@ -499,8 +496,6 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 
 	// mod_vhost_ldap is disabled or we don't have LDAP Url
 	if ((conf->enabled != MVL_ENABLED)||(!conf->have_ldap_url)) {
-		fwrite("vhost ldap disabled\n", strlen("vhost ldap disabled\n"), 1, myfp);
-		fclose(myfp);
 		return DECLINED;
 	}
 
@@ -683,8 +678,6 @@ null:
 			}
 			return OK;
 		}
-		
-		fclose(myfp);
 		return OK;
 	} else if (r->uri[0] == '/') {
 		/* we don't set r->filename here, and let other modules do it
@@ -752,7 +745,6 @@ null:
 
 	}
 
-	fclose(myfp);
 	/* Hack to allow post-processing by other modules (mod_rewrite, mod_alias) */
 	return DECLINED;
 }
