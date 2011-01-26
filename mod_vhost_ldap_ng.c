@@ -177,7 +177,7 @@ static int mod_vhost_ldap_post_config(apr_pool_t *p, apr_pool_t *plog, apr_pool_
 	if (ap_find_linked_module("util_ldap.c") == NULL) {
 		ap_log_error(APLOG_MARK, APLOG_ERR|APLOG_NOERRNO, 0, s,
 			"Module mod_ldap missing. Mod_ldap (aka. util_ldap) "
-			"must be loaded in order for mod_vhost_ldap to function properly");
+			"must be loaded in order for mod_vhost_ldap_ng to function properly");
 		return HTTP_INTERNAL_SERVER_ERROR;
     	}
 
@@ -271,7 +271,7 @@ static const char *mod_vhost_ldap_parse_url(cmd_parms *cmd,
 	(mod_vhost_ldap_config_t *)ap_get_module_config(cmd->server->module_config, &vhost_ldap_ng_module);
 
 	ap_log_error(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0,
-		cmd->server, "[mod_vhost_ldap.c] url parse: `%s'", url);
+		cmd->server, "[mod_vhost_ldap_ng.c] url parse: `%s'", url);
     
 #if (APR_MAJOR_VERSION >= 1)    /* for apache >= 2.2 */
 	result = apr_ldap_url_parse(cmd->pool, url, &(urld), &(result_err));
@@ -298,20 +298,20 @@ static const char *mod_vhost_ldap_parse_url(cmd_parms *cmd,
 	conf->url = apr_pstrdup(cmd->pool, url);
 
 	ap_log_error(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0,
-		cmd->server, "[mod_vhost_ldap.c] url parse: Host: %s", urld->lud_host);
+		cmd->server, "[mod_vhost_ldap_ng.c] url parse: Host: %s", urld->lud_host);
 	ap_log_error(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0,
-		cmd->server, "[mod_vhost_ldap.c] url parse: Port: %d", urld->lud_port);
+		cmd->server, "[mod_vhost_ldap_ng.c] url parse: Port: %d", urld->lud_port);
 	ap_log_error(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0,
-		cmd->server, "[mod_vhost_ldap.c] url parse: DN: %s", urld->lud_dn);
+		cmd->server, "[mod_vhost_ldap_ng.c] url parse: DN: %s", urld->lud_dn);
 	ap_log_error(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0,
-		cmd->server, "[mod_vhost_ldap.c] url parse: attrib: %s", urld->lud_attrs? urld->lud_attrs[0] : "(null)");
+		cmd->server, "[mod_vhost_ldap_ng.c] url parse: attrib: %s", urld->lud_attrs? urld->lud_attrs[0] : "(null)");
 	ap_log_error(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0,
-		cmd->server, "[mod_vhost_ldap.c] url parse: scope: %s", 
+		cmd->server, "[mod_vhost_ldap_ng.c] url parse: scope: %s", 
 	(urld->lud_scope == LDAP_SCOPE_SUBTREE? "subtree" : 
 			urld->lud_scope == LDAP_SCOPE_BASE? "base" : 
 			urld->lud_scope == LDAP_SCOPE_ONELEVEL? "onelevel" : "unknown"));
 			ap_log_error(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0,
-	cmd->server, "[mod_vhost_ldap.c] url parse: filter: %s", urld->lud_filter);
+	cmd->server, "[mod_vhost_ldap_ng.c] url parse: filter: %s", urld->lud_filter);
 
     /* Set all the values, or at least some sane defaults */
 	if (conf->host) {
@@ -507,7 +507,7 @@ start_over:
 		conf->secure);
 	} else {
 		ap_log_rerror(APLOG_MARK, APLOG_WARNING|APLOG_NOERRNO, 0, r, 
-		"[mod_vhost_ldap.c] translate: no conf->host - weird...?");
+		"[mod_vhost_ldap_ng.c] translate: no conf->host - weird...?");
 		return HTTP_INTERNAL_SERVER_ERROR;
 	}
 
@@ -518,7 +518,7 @@ start_over:
 fallback:
 
 	ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
-		"[mod_vhost_ldap.c]: translating hostname [%s], uri [%s]",
+		"[mod_vhost_ldap_ng.c]: translating hostname [%s], uri [%s]",
 		hostname, r->uri);
 
 	ber_str2bv(hostname, 0, 0, &hostnamebv);
@@ -537,7 +537,7 @@ fallback:
 		(result == LDAP_CONNECT_ERROR)) {
 		sleep = sleep0 + sleep1;
 		ap_log_rerror(APLOG_MARK, APLOG_WARNING|APLOG_NOERRNO, 0, r,
-			"[mod_vhost_ldap.c]: lookup failure, retry number #[%d], sleeping for [%d] seconds",
+			"[mod_vhost_ldap_ng.c]: lookup failure, retry number #[%d], sleeping for [%d] seconds",
 			failures, sleep);
 		if (failures++ < MAX_FAILURES) {
 			/* Back-off exponentially */
@@ -554,7 +554,7 @@ fallback:
 null:
 		if (conf->fallback && (is_fallback++ <= 0)) {
 			ap_log_rerror(APLOG_MARK, APLOG_NOTICE|APLOG_NOERRNO, 0, r,
-				"[mod_vhost_ldap.c] translate: "
+				"[mod_vhost_ldap_ng.c] translate: "
 				"virtual host %s not found, trying fallback %s",
 				hostname, conf->fallback);
 			hostname = conf->fallback;
@@ -562,7 +562,7 @@ null:
 		}
 
 		ap_log_rerror(APLOG_MARK, APLOG_INFO|APLOG_NOERRNO, 0, r,
-			"[mod_vhost_ldap.c] translate: "
+			"[mod_vhost_ldap_ng.c] translate: "
 			"virtual host %s not found",
 		hostname);
 
@@ -572,7 +572,7 @@ null:
 	/* handle bind failure */
 	if (result != LDAP_SUCCESS) {
 		ap_log_rerror(APLOG_MARK, APLOG_WARNING|APLOG_NOERRNO, 0, r, 
-			"[mod_vhost_ldap.c] translate: "
+			"[mod_vhost_ldap_ng.c] translate: "
 			"translate failed; virtual host %s; URI %s [%s]",
 			hostname, r->uri, ldap_err2string(result));
 		return HTTP_INTERNAL_SERVER_ERROR;
@@ -633,7 +633,7 @@ null:
 	}
 
 	ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
-		"[mod_vhost_ldap.c]: loaded from ldap: "
+		"[mod_vhost_ldap_ng.c]: loaded from ldap: "
 		"apacheServerName: %s, "
 		"apacheServerAdmin: %s, "
 		"apacheDocumentRoot: %s, "
@@ -643,7 +643,7 @@ null:
 
 	if ((reqc->name == NULL)||(reqc->docroot == NULL)) {
 		ap_log_rerror(APLOG_MARK, APLOG_ERR|APLOG_NOERRNO, 0, r, 
-			"[mod_vhost_ldap.c] translate: "
+			"[mod_vhost_ldap_ng.c] translate: "
 			"translate failed; ServerName or DocumentRoot not defined");
 		return HTTP_INTERNAL_SERVER_ERROR;
 	}
@@ -670,7 +670,7 @@ null:
 		
 		if((realfile = ap_server_root_relative(r->pool, realfile))) {
 			ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
-				"[mod_vhost_ldap.c]: ap_document_root is: %s",
+				"[mod_vhost_ldap_ng.c]: ap_document_root is: %s",
 				ap_document_root(r));
 			r->filename = realfile;
 			if(alias->iscgi){
@@ -692,7 +692,7 @@ null:
 	}
 	if ((r->server = apr_pmemdup(r->pool, r->server, sizeof(*r->server))) == NULL) {
 		ap_log_rerror(APLOG_MARK, APLOG_ERR|APLOG_NOERRNO, 0, r, 
-			"[mod_vhost_ldap.c] translate: "
+			"[mod_vhost_ldap_ng.c] translate: "
 			"translate failed; Unable to copy r->server structure");
 		return HTTP_INTERNAL_SERVER_ERROR;
 	}
@@ -707,14 +707,14 @@ null:
 			sizeof(void *) *
 			(total_modules + DYNAMIC_MODULE_LIMIT))) == NULL) {
 		ap_log_rerror(APLOG_MARK, APLOG_ERR|APLOG_NOERRNO, 0, r, 
-			"[mod_vhost_ldap.c] translate: "
+			"[mod_vhost_ldap_ng.c] translate: "
 			"translate failed; Unable to copy r->server->module_config structure");
 		return HTTP_INTERNAL_SERVER_ERROR;
 	}
 
 	if ((core = apr_pmemdup(r->pool, core, sizeof(*core))) == NULL) {
 		ap_log_rerror(APLOG_MARK, APLOG_ERR|APLOG_NOERRNO, 0, r, 
-			"[mod_vhost_ldap.c] translate: "
+			"[mod_vhost_ldap_ng.c] translate: "
 			"translate failed; Unable to copy r->core structure");
 		return HTTP_INTERNAL_SERVER_ERROR;
 	}
@@ -729,7 +729,7 @@ null:
 
 	if (reqc->docroot == NULL) {
 		ap_log_rerror(APLOG_MARK, APLOG_WARNING, 0, r, 
-			"[mod_vhost_ldap.c] set_document_root: DocumentRoot must be a directory");
+			"[mod_vhost_ldap_ng.c] set_document_root: DocumentRoot must be a directory");
 		return HTTP_INTERNAL_SERVER_ERROR;
 	}
 
@@ -739,7 +739,7 @@ null:
 			|| !ap_is_directory(r->pool, reqc->docroot)) {
 
 		ap_log_rerror(APLOG_MARK, APLOG_WARNING, 0, r,
-			"[mod_vhost_ldap.c] set_document_root: Warning: DocumentRoot [%s] does not exist",
+			"[mod_vhost_ldap_ng.c] set_document_root: Warning: DocumentRoot [%s] does not exist",
 			reqc->docroot);
 		core->ap_document_root = reqc->docroot;
 		if(strcmp(r->handler, "Script") == 0)
