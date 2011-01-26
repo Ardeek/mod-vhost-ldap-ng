@@ -113,7 +113,7 @@ typedef struct alias_t {
 } alias_t;
 
 char *attributes[] =
-	{ "apacheServerName", "apacheDocumentRoot", "apacheScriptAlias", "apacheSuexecUid", "apacheSuexecGid", "apacheServerAdmin", 0 };
+	{ "apacheServerName", "apacheDocumentRoot", "apacheScriptAlias", "apacheSuexecUid", "apacheSuexecGid", "apacheServerAdmin", "apacheAlias", 0 };
 
 static int total_modules;
 
@@ -580,8 +580,8 @@ null:
 
 	/* mark the user and DN */
 	reqc->dn = apr_pstrdup(r->pool, dn);
-	reqc->aliases = (apr_array_header_t *)apr_array_make(r->pool, 1, sizeof(alias_t));
-	reqc->redirects = (apr_array_header_t *)apr_array_make(r->pool, 1, sizeof(alias_t));
+	reqc->aliases = (apr_array_header_t *)apr_array_make(r->pool, 5, sizeof(alias_t));
+	reqc->redirects = (apr_array_header_t *)apr_array_make(r->pool, 5, sizeof(alias_t));
 	
 	if (vals) {
 		int i = 0;
@@ -604,9 +604,10 @@ null:
 					alias->dst = apr_strtok(NULL, " ", &tok);
 					alias->iscgi = 1;
 					isalias = 1;
-				}else
+				}else{
 					ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
 				                "[mod_vhost_ldap_ng.c]: Wrong apacheScriptAlias paramter: %s", vals[i]);
+				}
 			} else if (strcasecmp (attributes[i], "apacheAlias") == 0) {
 				cur = strstr(vals[i], " ");
                                 if(cur - vals[i] > 1 ){
@@ -618,9 +619,10 @@ null:
 					alias->dst = apr_strtok(NULL, " ", &tok);
 					alias->iscgi = 0;
 					isalias = 1;
-				}else
+				}else{
 					ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
                                                 "[mod_vhost_ldap_ng.c]: Wrong apacheAlias parameter: %s", vals[i]);
+				}
 			} else if (strcasecmp (attributes[i], "apacheSuexecUid") == 0) {
 				reqc->uid = apr_pstrdup(r->pool, vals[i]);
 			} else if (strcasecmp (attributes[i], "apacheSuexecGid") == 0) {
@@ -649,24 +651,24 @@ null:
 		isalias = 0;
 		int k = 0;
 		//From mod_alias
+		alias_t *aliasp = (alias_t *)reqc->aliases->elts;
 		if (r->uri[0] != '/' && r->uri[0] != '\0') 
 			return DECLINED;
-		while(k < reqc->aliases->nelts ){
-			alias = (alias_t *)&reqc->aliases->elts[k];
+		for(k = 0; k < reqc->aliases->nelts ; k++){
+			alias = (alias_t *) &aliasp[k];
 			isalias = alias_matches(r->uri, alias->src);
 			if(isalias > 0)
 				break;
-			k++;
 		}
 	}
 	if (isalias) {
 		/* Set exact filename for CGI script */
 		realfile = apr_pstrcat(r->pool, alias->dst, r->uri + strlen(alias->src), NULL);
 
-		if(conf->rootdir)
+		if(conf->rootdir && (strncmp(alias->dst, "/", 1) != 0))
 			realfile = apr_pstrcat(r->pool, conf->rootdir, realfile, NULL);
 		
-		if ((realfile = ap_server_root_relative(r->pool, realfile))) {
+		if((realfile = ap_server_root_relative(r->pool, realfile))) {
 			ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
 				"[mod_vhost_ldap.c]: ap_document_root is: %s",
 				ap_document_root(r));
