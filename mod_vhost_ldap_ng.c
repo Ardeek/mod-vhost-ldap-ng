@@ -113,7 +113,7 @@ typedef struct alias_t {
 } alias_t;
 
 char *attributes[] =
-	{ "apacheServerName", "apacheDocumentRoot", "apacheScriptAlias", "apacheSuexecUid", "apacheSuexecGid", "apacheServerAdmin", "apacheAlias", 0 };
+	{ "apacheServerName", "apacheDocumentRoot", "apacheScriptAlias", "apacheSuexecUid", "apacheSuexecGid", "apacheServerAdmin", "apacheAlias", "apacheRedirect", 0 };
 
 static int total_modules;
 
@@ -623,6 +623,21 @@ null:
 					ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
                                                 "[mod_vhost_ldap_ng.c]: Wrong apacheAlias parameter: %s", vals[i]);
 				}
+			} else if (strcasecmp (attributes[i], "apacheRedirect") == 0) {
+				 cur = strstr(vals[i], " ");
+                                if(cur - vals[i] > 1 ){
+                                        tmp = apr_palloc(r->pool, sizeof(char)*strlen(vals[i]));
+                                        strcpy(tmp, vals[i]);
+                                        tok = NULL;
+                                        alias = apr_array_push(reqc->redirects);
+                                        alias->src = apr_strtok((char *)vals[i] , " ", &tok);
+                                        alias->dst = apr_strtok(NULL, " ", &tok);
+                                        alias->iscgi = 0;
+                                        isalias = 1;
+                                }else{
+                                        ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
+                                                "[mod_vhost_ldap_ng.c]: Wrong apacheRedirect parameter: %s", vals[i]);
+                                }
 			} else if (strcasecmp (attributes[i], "apacheSuexecUid") == 0) {
 				reqc->uid = apr_pstrdup(r->pool, vals[i]);
 			} else if (strcasecmp (attributes[i], "apacheSuexecGid") == 0) {
@@ -649,17 +664,27 @@ null:
 	}
 	if (isalias) {
 		isalias = 0;
-		int k = 0;
+		int k;
 		//From mod_alias
-		alias_t *aliasp = (alias_t *)reqc->aliases->elts;
+		alias_t *cursor = (alias_t *)reqc->redirects->elts;
 		if (r->uri[0] != '/' && r->uri[0] != '\0') 
 			return DECLINED;
-		for(k = 0; k < reqc->aliases->nelts ; k++){
-			alias = (alias_t *) &aliasp[k];
+		for(k = 0; k < reqc->redirects->nelts; k++){
+			alias = (alias_t *) &cursor[k];
 			isalias = alias_matches(r->uri, alias->src);
-			if(isalias > 0)
+			if(isalias > 0){
+				apr_table_setn(r->headers_out, "Location", alias->dst);
+				return 301;
+			}
+		}
+		cursor = (alias_t *)reqc->aliases->elts;
+		for(k = 0; k < reqc->aliases->nelts; k++){
+			alias = (alias_t *) &cursor[k];
+			isalias = alias_matches(r->uri, alias->src);
+			if(isalias>0)
 				break;
 		}
+		
 	}
 	if (isalias) {
 		/* Set exact filename for CGI script */
