@@ -587,61 +587,63 @@ null:
 		int i = 0;
 		char *tok, *tmp, *cur;
 		while (attributes[i]) {
-			if (strcasecmp (attributes[i], "apacheServerName") == 0) {
-				reqc->name = apr_pstrdup (r->pool, vals[i]);
-			} else if (strcasecmp (attributes[i], "apacheServerAdmin") == 0) {
-				reqc->admin = apr_pstrdup (r->pool, vals[i]);
-			} else if (strcasecmp (attributes[i], "apacheDocumentRoot") == 0) {
-				reqc->docroot = apr_pstrdup (r->pool, vals[i]);
-			} else if (strcasecmp (attributes[i], "apacheScriptAlias") == 0) {
-				cur = strstr(vals[i], " ");
-				if(cur - vals[i] > 1 ){
-					tmp = apr_palloc(r->pool, sizeof(char)*strlen(vals[i]));
-					strcpy(tmp, vals[i]);
-					tok = NULL;
-					alias = apr_array_push(reqc->aliases);
-					alias->src = apr_strtok((char *)tmp , " ", &tok);
-					alias->dst = apr_strtok(NULL, " ", &tok);
-					alias->iscgi = 1;
-					isalias = 1;
-				}else{
-					ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
-				                "[mod_vhost_ldap_ng.c]: Wrong apacheScriptAlias paramter: %s", vals[i]);
+			if(vals[i]){
+				if (strcasecmp (attributes[i], "apacheServerName") == 0) {
+					reqc->name = apr_pstrdup (r->pool, vals[i]);
+				} else if (strcasecmp (attributes[i], "apacheServerAdmin") == 0) {
+					reqc->admin = apr_pstrdup (r->pool, vals[i]);
+				} else if (strcasecmp (attributes[i], "apacheDocumentRoot") == 0) {
+					reqc->docroot = apr_pstrdup (r->pool, vals[i]);
+				} else if (strcasecmp (attributes[i], "apacheScriptAlias") == 0) {
+					cur = strstr(vals[i], " ");
+					if(cur - vals[i] > 1 ){
+						tmp = apr_palloc(r->pool, sizeof(char)*strlen(vals[i]));
+						strcpy(tmp, vals[i]);
+						tok = NULL;
+						alias = apr_array_push(reqc->aliases);
+						alias->src = apr_strtok((char *)tmp , " ", &tok);
+						alias->dst = apr_strtok(NULL, " ", &tok);
+						alias->iscgi = 1;
+						isalias = 1;
+					}else{
+						ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
+					                "[mod_vhost_ldap_ng.c]: Wrong apacheScriptAlias paramter: %s", vals[i]);
+					}
+				} else if (strcasecmp (attributes[i], "apacheAlias") == 0) {
+					cur = strstr(vals[i], " ");
+					if(cur - vals[i] > 1 ){
+						tmp = apr_palloc(r->pool, sizeof(char)*strlen(vals[i]));
+						strcpy(tmp, vals[i]);
+						tok = NULL;
+						alias = apr_array_push(reqc->aliases);
+						alias->src = apr_strtok((char *)vals[i] , " ", &tok);
+						alias->dst = apr_strtok(NULL, " ", &tok);
+						alias->iscgi = 0;
+						isalias = 1;
+					}else{
+						ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
+	                                                "[mod_vhost_ldap_ng.c]: Wrong apacheAlias parameter: %s", vals[i]);
+					}
+				} else if (strcasecmp (attributes[i], "apacheRedirect") == 0) {
+					cur = strstr(vals[i], " ");
+	                                if(cur - vals[i] > 0 ){
+	                                        tmp = apr_palloc(r->pool, sizeof(char)*strlen(vals[i]));
+	                                        strcpy(tmp, vals[i]);
+	                                        tok = NULL;
+	                                        alias = apr_array_push(reqc->redirects);
+	                                        alias->src = apr_strtok((char *)vals[i] , " ", &tok);
+	                                        alias->dst = apr_strtok(NULL, " ", &tok);
+	                                        alias->iscgi = 0;
+	                                        isalias = 1;
+	                                }else{
+	                                        ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
+	                                                "[mod_vhost_ldap_ng.c]: Wrong apacheRedirect parameter: %s", vals[i]);
+	                                }
+				} else if (strcasecmp (attributes[i], "apacheSuexecUid") == 0) {
+					reqc->uid = apr_pstrdup(r->pool, vals[i]);
+				} else if (strcasecmp (attributes[i], "apacheSuexecGid") == 0) {
+					reqc->gid = apr_pstrdup(r->pool, vals[i]);
 				}
-			} else if (strcasecmp (attributes[i], "apacheAlias") == 0) {
-				cur = strstr(vals[i], " ");
-                                if(cur - vals[i] > 1 ){
-                                        tmp = apr_palloc(r->pool, sizeof(char)*strlen(vals[i]));
-                                        strcpy(tmp, vals[i]);
-					tok = NULL;
-					alias = apr_array_push(reqc->aliases);
-					alias->src = apr_strtok((char *)vals[i] , " ", &tok);
-					alias->dst = apr_strtok(NULL, " ", &tok);
-					alias->iscgi = 0;
-					isalias = 1;
-				}else{
-					ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
-                                                "[mod_vhost_ldap_ng.c]: Wrong apacheAlias parameter: %s", vals[i]);
-				}
-			} else if (strcasecmp (attributes[i], "apacheRedirect") == 0) {
-				 cur = strstr(vals[i], " ");
-                                if(cur - vals[i] > 1 ){
-                                        tmp = apr_palloc(r->pool, sizeof(char)*strlen(vals[i]));
-                                        strcpy(tmp, vals[i]);
-                                        tok = NULL;
-                                        alias = apr_array_push(reqc->redirects);
-                                        alias->src = apr_strtok((char *)vals[i] , " ", &tok);
-                                        alias->dst = apr_strtok(NULL, " ", &tok);
-                                        alias->iscgi = 0;
-                                        isalias = 1;
-                                }else{
-                                        ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
-                                                "[mod_vhost_ldap_ng.c]: Wrong apacheRedirect parameter: %s", vals[i]);
-                                }
-			} else if (strcasecmp (attributes[i], "apacheSuexecUid") == 0) {
-				reqc->uid = apr_pstrdup(r->pool, vals[i]);
-			} else if (strcasecmp (attributes[i], "apacheSuexecGid") == 0) {
-				reqc->gid = apr_pstrdup(r->pool, vals[i]);
 			}
 			i++;
 		}
