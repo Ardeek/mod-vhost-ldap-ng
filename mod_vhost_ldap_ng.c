@@ -465,6 +465,26 @@ command_rec mod_vhost_ldap_cmds[] = {
 	{NULL}
 };
 
+static void attribute_tokenizer(char *instr, ...)
+{
+	va_list arglist; 
+	char *tok, **cur;
+	int i = 0;
+	va_start(arglist, instr);
+	while(1){
+		cur = va_arg(arglist, char**);
+		if(!cur)
+			break;
+		if(i < 1){
+			*cur = apr_strtok((char *)instr, " ", &tok);
+			i++;
+		}else{
+			*cur = apr_strtok(NULL, " ", &tok);
+		}
+	};
+
+}
+
 #define FILTER_LENGTH MAX_STRING_LEN
 static int mod_vhost_ldap_translate_name(request_rec *r)
 {
@@ -585,7 +605,7 @@ null:
 	
 	if (vals) {
 		int i = 0;
-		char *tok, *tmp, *cur;
+		char *cur;
 		while (attributes[i]) {
 			if(vals[i]){
 				if (strcasecmp (attributes[i], "apacheServerName") == 0) {
@@ -595,29 +615,21 @@ null:
 				} else if (strcasecmp (attributes[i], "apacheDocumentRoot") == 0) {
 					reqc->docroot = apr_pstrdup (r->pool, vals[i]);
 				} else if (strcasecmp (attributes[i], "apacheScriptAlias") == 0) {
+					alias = apr_array_push(reqc->aliases);
 					cur = strstr(vals[i], " ");
 					if(cur - vals[i] > 1 ){
-						tmp = apr_palloc(r->pool, sizeof(char)*strlen(vals[i]));
-						strcpy(tmp, vals[i]);
-						tok = NULL;
-						alias = apr_array_push(reqc->aliases);
-						alias->src = apr_strtok((char *)tmp , " ", &tok);
-						alias->dst = apr_strtok(NULL, " ", &tok);
-						alias->iscgi = 1;
+						attribute_tokenizer((char *)vals[i], &alias->src, &alias->dst, NULL);
 						isalias = 1;
+						alias->iscgi = 1;
 					}else{
 						ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
 					                "[mod_vhost_ldap_ng.c]: Wrong apacheScriptAlias paramter: %s", vals[i]);
 					}
 				} else if (strcasecmp (attributes[i], "apacheAlias") == 0) {
+					alias = apr_array_push(reqc->aliases);
 					cur = strstr(vals[i], " ");
 					if(cur - vals[i] > 1 ){
-						tmp = apr_palloc(r->pool, sizeof(char)*strlen(vals[i]));
-						strcpy(tmp, vals[i]);
-						tok = NULL;
-						alias = apr_array_push(reqc->aliases);
-						alias->src = apr_strtok((char *)vals[i] , " ", &tok);
-						alias->dst = apr_strtok(NULL, " ", &tok);
+						attribute_tokenizer((char *)vals[i], &alias->src, &alias->dst, NULL);
 						alias->iscgi = 0;
 						isalias = 1;
 					}else{
@@ -625,14 +637,10 @@ null:
 	                                                "[mod_vhost_ldap_ng.c]: Wrong apacheAlias parameter: %s", vals[i]);
 					}
 				} else if (strcasecmp (attributes[i], "apacheRedirect") == 0) {
+					alias = apr_array_push(reqc->redirects);
 					cur = strstr(vals[i], " ");
 	                                if(cur - vals[i] > 0 ){
-	                                        tmp = apr_palloc(r->pool, sizeof(char)*strlen(vals[i]));
-	                                        strcpy(tmp, vals[i]);
-	                                        tok = NULL;
-	                                        alias = apr_array_push(reqc->redirects);
-	                                        alias->src = apr_strtok((char *)vals[i] , " ", &tok);
-	                                        alias->dst = apr_strtok(NULL, " ", &tok);
+						attribute_tokenizer((char *)vals[i], &alias->src, &alias->dst, NULL);
 	                                        alias->iscgi = 0;
 	                                        isalias = 1;
 	                                }else{
