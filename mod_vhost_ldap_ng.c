@@ -471,11 +471,11 @@ static void attribute_tokenizer(char *instr, ...)
 	char *tok, **cur;
 	int i = 0;
 	va_start(arglist, instr);
-	while(1){
-		cur = va_arg(arglist, char**);
-		if(!cur)
-			break;
-		if(i < 1){
+	while((cur = va_arg(arglist, char**))){
+		//cur = va_arg(arglist, char**);
+		//if(!cur)
+		//	return;
+		if(i == 0){
 			*cur = apr_strtok((char *)instr, " ", &tok);
 			i++;
 		}else{
