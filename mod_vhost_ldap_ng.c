@@ -465,24 +465,21 @@ command_rec mod_vhost_ldap_cmds[] = {
 	{NULL}
 };
 
-static void attribute_tokenizer(char *instr, ...)
+static int attribute_tokenizer(char *instr, ...)
 {
 	va_list arglist; 
 	char *tok, **cur;
 	int i = 0;
 	va_start(arglist, instr);
 	while((cur = va_arg(arglist, char**))){
-		//cur = va_arg(arglist, char**);
-		//if(!cur)
-		//	return;
-		if(i == 0){
+		if(i == 0)
 			*cur = apr_strtok((char *)instr, " ", &tok);
-			i++;
-		}else{
+		else
 			*cur = apr_strtok(NULL, " ", &tok);
-		}
+		i++;
 	};
-
+	va_end(arglist);
+	return i;
 }
 
 #define FILTER_LENGTH MAX_STRING_LEN
@@ -506,7 +503,7 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 	int sleep1 = 1;
 	int sleep;
 	struct berval hostnamebv, shostnamebv;
-	alias_t *alias;
+	alias_t *alias = NULL;
 	int isalias = 0;
 	reqc =
 	(mod_vhost_ldap_request_t *)apr_pcalloc(r->pool, sizeof(mod_vhost_ldap_request_t));
@@ -615,9 +612,9 @@ null:
 				} else if (strcasecmp (attributes[i], "apacheDocumentRoot") == 0) {
 					reqc->docroot = apr_pstrdup (r->pool, vals[i]);
 				} else if (strcasecmp (attributes[i], "apacheScriptAlias") == 0) {
-					alias = apr_array_push(reqc->aliases);
 					cur = strstr(vals[i], " ");
 					if(cur - vals[i] > 1 ){
+						alias = apr_array_push(reqc->aliases);
 						attribute_tokenizer((char *)vals[i], &alias->src, &alias->dst, NULL);
 						isalias = 1;
 						alias->iscgi = 1;
@@ -626,9 +623,9 @@ null:
 					                "[mod_vhost_ldap_ng.c]: Wrong apacheScriptAlias paramter: %s", vals[i]);
 					}
 				} else if (strcasecmp (attributes[i], "apacheAlias") == 0) {
-					alias = apr_array_push(reqc->aliases);
 					cur = strstr(vals[i], " ");
 					if(cur - vals[i] > 1 ){
+						alias = apr_array_push(reqc->aliases);
 						attribute_tokenizer((char *)vals[i], &alias->src, &alias->dst, NULL);
 						alias->iscgi = 0;
 						isalias = 1;
@@ -637,9 +634,9 @@ null:
 	                                                "[mod_vhost_ldap_ng.c]: Wrong apacheAlias parameter: %s", vals[i]);
 					}
 				} else if (strcasecmp (attributes[i], "apacheRedirect") == 0) {
-					alias = apr_array_push(reqc->redirects);
 					cur = strstr(vals[i], " ");
 	                                if(cur - vals[i] > 0 ){
+						alias = apr_array_push(reqc->redirects);
 						attribute_tokenizer((char *)vals[i], &alias->src, &alias->dst, NULL);
 	                                        alias->iscgi = 0;
 	                                        isalias = 1;
