@@ -109,6 +109,7 @@ typedef struct mod_vhost_ldap_request_t {
 typedef struct alias_t {
 	char *src;
 	char *dst;
+	char *redir_status;
 	int iscgi;
 } alias_t;
 
@@ -475,7 +476,8 @@ static int attribute_tokenizer(char *instr, ...)
 		if(i == 0)
 			*cur = apr_strtok((char *)instr, " ", &tok);
 		else
-			*cur = apr_strtok(NULL, " ", &tok);
+			if(!(*cur = apr_strtok(NULL, " ", &tok)))
+				return i;
 		i++;
 	};
 	va_end(arglist);
@@ -637,7 +639,7 @@ null:
 					cur = strstr(vals[i], " ");
 	                                if(cur - vals[i] > 0 ){
 						alias = apr_array_push(reqc->redirects);
-						attribute_tokenizer((char *)vals[i], &alias->src, &alias->dst, NULL);
+						attribute_tokenizer((char *)vals[i], &alias->src, &alias->dst, &alias->redir_status, NULL);
 	                                        alias->iscgi = 0;
 	                                        isalias = 1;
 	                                }else{
@@ -672,7 +674,10 @@ null:
 	if (isalias) {
 		isalias = 0;
 		int k;
-		//From mod_alias
+		/*
+		From mod_alias:
+		checks for redirects
+		*/
 		alias_t *cursor = (alias_t *)reqc->redirects->elts;
 		if (r->uri[0] != '/' && r->uri[0] != '\0') 
 			return DECLINED;
@@ -681,9 +686,20 @@ null:
 			isalias = alias_matches(r->uri, alias->src);
 			if(isalias > 0){
 				apr_table_setn(r->headers_out, "Location", alias->dst);
-				return 301;
+				if(alias->redir_status){
+					if (strcasecmp(alias->redir_status, "gone") == 0)
+						return  HTTP_GONE;
+					else if (strcasecmp(alias->redir_status, "permanent") == 0)
+						return HTTP_MOVED_PERMANENTLY;
+					else if (strcasecmp(alias->redir_status, "temp") == 0)
+						return HTTP_MOVED_TEMPORARILY;
+					else if (strcasecmp(alias->redir_status, "seeother") == 0)
+						return HTTP_SEE_OTHER;
+				}
+				return HTTP_MOVED_PERMANENTLY;
 			}
 		}
+		/* Checking for aliases */
 		cursor = (alias_t *)reqc->aliases->elts;
 		for(k = 0; k < reqc->aliases->nelts; k++){
 			alias = (alias_t *) &cursor[k];
