@@ -101,9 +101,6 @@ typedef struct mod_vhost_ldap_request_t {
 	char *cgiroot;			/* ScriptAlias */
 	char *uid;				/* Suexec Uid */
 	char *gid;				/* Suexec Gid */
-	apr_array_header_t *aliases;
-	apr_array_header_t *redirects;
-
 } mod_vhost_ldap_request_t;
 
 typedef struct alias_t {
@@ -507,6 +504,8 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 	struct berval hostnamebv, shostnamebv;
 	alias_t *alias = NULL;
 	int isalias = 0;
+	apr_array_header_t *aliases;
+        apr_array_header_t *redirects;
 	reqc =
 	(mod_vhost_ldap_request_t *)apr_pcalloc(r->pool, sizeof(mod_vhost_ldap_request_t));
 	memset(reqc, 0, sizeof(mod_vhost_ldap_request_t)); 
@@ -599,8 +598,8 @@ null:
 
 	/* mark the user and DN */
 	reqc->dn = apr_pstrdup(r->pool, dn);
-	reqc->aliases = (apr_array_header_t *)apr_array_make(r->pool, 5, sizeof(alias_t));
-	reqc->redirects = (apr_array_header_t *)apr_array_make(r->pool, 5, sizeof(alias_t));
+	aliases = (apr_array_header_t *)apr_array_make(r->pool, 5, sizeof(alias_t));
+	redirects = (apr_array_header_t *)apr_array_make(r->pool, 5, sizeof(alias_t));
 	
 	if (vals) {
 		int i = 0;
@@ -616,7 +615,7 @@ null:
 				} else if (strcasecmp (attributes[i], "apacheScriptAlias") == 0) {
 					cur = strstr(vals[i], " ");
 					if(cur - vals[i] > 1 ){
-						alias = apr_array_push(reqc->aliases);
+						alias = apr_array_push(aliases);
 						attribute_tokenizer((char *)vals[i], &alias->src, &alias->dst, NULL);
 						isalias = 1;
 						alias->iscgi = 1;
@@ -627,7 +626,7 @@ null:
 				} else if (strcasecmp (attributes[i], "apacheAlias") == 0) {
 					cur = strstr(vals[i], " ");
 					if(cur - vals[i] > 1 ){
-						alias = apr_array_push(reqc->aliases);
+						alias = apr_array_push(aliases);
 						attribute_tokenizer((char *)vals[i], &alias->src, &alias->dst, NULL);
 						alias->iscgi = 0;
 						isalias = 1;
@@ -638,7 +637,7 @@ null:
 				} else if (strcasecmp (attributes[i], "apacheRedirect") == 0) {
 					cur = strstr(vals[i], " ");
 	                                if(cur - vals[i] > 0 ){
-						alias = apr_array_push(reqc->redirects);
+						alias = apr_array_push(redirects);
 						attribute_tokenizer((char *)vals[i], &alias->src, &alias->dst, &alias->redir_status, NULL);
 	                                        alias->iscgi = 0;
 	                                        isalias = 1;
@@ -650,6 +649,15 @@ null:
 					reqc->uid = apr_pstrdup(r->pool, vals[i]);
 				} else if (strcasecmp (attributes[i], "apacheSuexecGid") == 0) {
 					reqc->gid = apr_pstrdup(r->pool, vals[i]);
+				} else if (strcasecmp (attributes[i], "apacheErrorLog") == 0) {
+					if(conf->rootdir && (strncmp(vals[i], "/", 1) != 0))
+			                        r->server->error_fname = apr_pstrcat(r->pool, conf->rootdir, vals[i], NULL);
+					else
+						r->server->error_fname = (char *)vals[i];
+					apr_file_open(&r->server->error_log, r->server->error_fname,
+							APR_APPEND | APR_WRITE | APR_CREATE | APR_LARGEFILE,
+							APR_OS_DEFAULT, r->pool);
+
 				}
 			}
 			i++;
@@ -678,10 +686,10 @@ null:
 		From mod_alias:
 		checks for redirects
 		*/
-		alias_t *cursor = (alias_t *)reqc->redirects->elts;
+		alias_t *cursor = (alias_t *)redirects->elts;
 		if (r->uri[0] != '/' && r->uri[0] != '\0') 
 			return DECLINED;
-		for(k = 0; k < reqc->redirects->nelts; k++){
+		for(k = 0; k < redirects->nelts; k++){
 			alias = (alias_t *) &cursor[k];
 			isalias = alias_matches(r->uri, alias->src);
 			if(isalias > 0){
@@ -700,8 +708,8 @@ null:
 			}
 		}
 		/* Checking for aliases */
-		cursor = (alias_t *)reqc->aliases->elts;
-		for(k = 0; k < reqc->aliases->nelts; k++){
+		cursor = (alias_t *)aliases->elts;
+		for(k = 0; k < aliases->nelts; k++){
 			alias = (alias_t *) &cursor[k];
 			isalias = alias_matches(r->uri, alias->src);
 			if(isalias>0)
@@ -712,10 +720,10 @@ null:
 	if (isalias) {
 		/* Set exact filename for CGI script */
 		realfile = apr_pstrcat(r->pool, alias->dst, r->uri + strlen(alias->src), NULL);
-
+		/* Add apacheRootDir config param IF realfile is a realative path*/
 		if(conf->rootdir && (strncmp(alias->dst, "/", 1) != 0))
 			realfile = apr_pstrcat(r->pool, conf->rootdir, realfile, NULL);
-		
+		/* Let apache normalize the path */
 		if((realfile = ap_server_root_relative(r->pool, realfile))) {
 			ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
 				"[mod_vhost_ldap_ng.c]: ap_document_root is: %s",
@@ -771,7 +779,7 @@ null:
 	/* Stolen from server/core.c */
 
 	/* Make it absolute, relative to ServerRoot */
-	if(conf->rootdir)
+	if(conf->rootdir && (strncmp(reqc->docroot, "/", 1) != 0))
 		reqc->docroot = apr_pstrcat(r->pool, conf->rootdir, reqc->docroot, NULL);
 	reqc->docroot = ap_server_root_relative(r->pool, reqc->docroot);
 
