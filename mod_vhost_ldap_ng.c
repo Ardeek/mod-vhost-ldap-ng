@@ -63,6 +63,9 @@
 
 module AP_MODULE_DECLARE_DATA vhost_ldap_ng_module;
 
+static LDAP *ldapconn;
+static apr_pool_t *vhost_ldap_pool = NULL;
+int ldap_version = LDAP_VERSION3;
 typedef enum {
 	MVL_UNSET, MVL_DISABLED, MVL_ENABLED
 } mod_vhost_ldap_status_e;
@@ -101,7 +104,12 @@ typedef struct mod_vhost_ldap_request_t {
 	char *cgiroot;			/* ScriptAlias */
 	char *uid;				/* Suexec Uid */
 	char *gid;				/* Suexec Gid */
+	apr_time_t expires;		/* Expire time from cache */
+	apr_array_header_t *aliases;
+	apr_array_header_t *redirects;	
 } mod_vhost_ldap_request_t;
+
+static apr_hash_t *requestscache;
 
 typedef struct alias_t {
 	char *src;
@@ -115,26 +123,6 @@ char *attributes[] =
 
 static int total_modules;
 
-#if (APR_MAJOR_VERSION >= 1)
-static APR_OPTIONAL_FN_TYPE(uldap_connection_close) *util_ldap_connection_close;
-static APR_OPTIONAL_FN_TYPE(uldap_connection_find) *util_ldap_connection_find;
-static APR_OPTIONAL_FN_TYPE(uldap_cache_comparedn) *util_ldap_cache_comparedn;
-static APR_OPTIONAL_FN_TYPE(uldap_cache_compare) *util_ldap_cache_compare;
-static APR_OPTIONAL_FN_TYPE(uldap_cache_checkuserid) *util_ldap_cache_checkuserid;
-static APR_OPTIONAL_FN_TYPE(uldap_cache_getuserdn) *util_ldap_cache_getuserdn;
-static APR_OPTIONAL_FN_TYPE(uldap_ssl_supported) *util_ldap_ssl_supported;
-
-static void ImportULDAPOptFn(void)
-{
-	util_ldap_connection_close  = APR_RETRIEVE_OPTIONAL_FN(uldap_connection_close);
-	util_ldap_connection_find   = APR_RETRIEVE_OPTIONAL_FN(uldap_connection_find);
-	util_ldap_cache_comparedn   = APR_RETRIEVE_OPTIONAL_FN(uldap_cache_comparedn);
-	util_ldap_cache_compare     = APR_RETRIEVE_OPTIONAL_FN(uldap_cache_compare);
-	util_ldap_cache_checkuserid = APR_RETRIEVE_OPTIONAL_FN(uldap_cache_checkuserid);
-	util_ldap_cache_getuserdn   = APR_RETRIEVE_OPTIONAL_FN(uldap_cache_getuserdn);
-	util_ldap_ssl_supported     = APR_RETRIEVE_OPTIONAL_FN(uldap_ssl_supported);
-}
-#endif 
 //From mod_alias
 static int alias_matches(const char *uri, const char *alias_fakename)
 {
@@ -481,189 +469,158 @@ static int attribute_tokenizer(char *instr, ...)
 	return i;
 }
 
+static apr_status_t mod_vhost_ldap_child_exit(void *data)
+{
+	if (ldapconn)
+		ldap_unbind (ldapconn);
+	return APR_SUCCESS;
+}
+
+static void mod_vhost_ldap_child_init(apr_pool_t * p, server_rec * s)
+{
+	mod_vhost_ldap_config_t *conf =
+		(mod_vhost_ldap_config_t *)ap_get_module_config(s->module_config, &vhost_ldap_ng_module);
+	if(!vhost_ldap_pool)
+		apr_pool_create(&vhost_ldap_pool, p);
+	if(!requestscache)
+		requestscache = apr_hash_make(vhost_ldap_pool);
+	if(!ldapconn){
+		ldapconn = ldap_init(conf->host, conf->port);
+		ldap_set_option(ldapconn, LDAP_OPT_PROTOCOL_VERSION, &ldap_version);
+		if (ldap_simple_bind_s (ldapconn, conf->binddn, conf->bindpw) != LDAP_SUCCESS){
+			ldap_unbind(ldapconn);
+			ldapconn = NULL;
+			ap_log_error(APLOG_MARK, APLOG_WARNING, 0, s, "[mod_vhost_ldap_ng.c]: ldap connect error");
+		}
+	}
+	apr_pool_cleanup_register(p, s, mod_vhost_ldap_child_exit, mod_vhost_ldap_child_exit);
+}
+
+
+
 #define FILTER_LENGTH MAX_STRING_LEN
 static int mod_vhost_ldap_translate_name(request_rec *r)
 {
 	mod_vhost_ldap_request_t *reqc;
-	int failures = 0;
-	const char **vals = NULL;
-	char filtbuf[FILTER_LENGTH];
 	mod_vhost_ldap_config_t *conf =
 	(mod_vhost_ldap_config_t *)ap_get_module_config(r->server->module_config, &vhost_ldap_ng_module);
 	core_server_config *core =
 		(core_server_config *)ap_get_module_config(r->server->module_config, &core_module);
-	util_ldap_connection_t *ldc = NULL;
-	int result = 0;
-	const char *dn = NULL;
 	char *realfile;
-	const char *hostname = NULL;
-	int is_fallback = 0;
-	int sleep0 = 0;
-	int sleep1 = 1;
-	int sleep;
-	struct berval hostnamebv, shostnamebv;
-	alias_t *alias = NULL;
+		alias_t *alias = NULL;
 	int isalias = 0;
-	apr_array_header_t *aliases;
-        apr_array_header_t *redirects;
-	reqc =
-	(mod_vhost_ldap_request_t *)apr_pcalloc(r->pool, sizeof(mod_vhost_ldap_request_t));
-	memset(reqc, 0, sizeof(mod_vhost_ldap_request_t)); 
-
-	ap_set_module_config(r->request_config, &vhost_ldap_ng_module, reqc);
-
+	
 	// mod_vhost_ldap is disabled or we don't have LDAP Url
 	if ((conf->enabled != MVL_ENABLED)||(!conf->have_ldap_url)) {
 		return DECLINED;
 	}
 
-start_over:
-
-	if (conf->host) {
-		ldc = util_ldap_connection_find(r, conf->host, conf->port,
-		conf->binddn, conf->bindpw, conf->deref,
-		conf->secure);
-	} else {
-		ap_log_rerror(APLOG_MARK, APLOG_WARNING|APLOG_NOERRNO, 0, r, 
-		"[mod_vhost_ldap_ng.c] translate: no conf->host - weird...?");
-		return HTTP_INTERNAL_SERVER_ERROR;
-	}
-
-	hostname = r->hostname;
-	if (hostname == NULL || hostname[0] == '\0')
-	goto null;
-
-fallback:
-
-	ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
-		"[mod_vhost_ldap_ng.c]: translating hostname [%s], uri [%s]",
-		hostname, r->uri);
-
-	ber_str2bv(hostname, 0, 0, &hostnamebv);
-	if (ldap_bv2escaped_filter_value(&hostnamebv, &shostnamebv) != 0)
-		goto null;
-	apr_snprintf(filtbuf, FILTER_LENGTH, "(&(%s)(|(apacheServerName=%s)(apacheServerAlias=%s)))", conf->filter, shostnamebv.bv_val, shostnamebv.bv_val);
-	ber_memfree(shostnamebv.bv_val);
-
-	result = util_ldap_cache_getuserdn(r, ldc, conf->url, conf->basedn, conf->scope, attributes, filtbuf, &dn, &vals);
-
-	util_ldap_connection_close(ldc);
-
-    /* sanity check - if server is down, retry it up to 5 times */
-	if (AP_LDAP_IS_SERVER_DOWN(result) ||
-		(result == LDAP_TIMEOUT) ||
-		(result == LDAP_CONNECT_ERROR)) {
-		sleep = sleep0 + sleep1;
-		ap_log_rerror(APLOG_MARK, APLOG_WARNING|APLOG_NOERRNO, 0, r,
-			"[mod_vhost_ldap_ng.c]: lookup failure, retry number #[%d], sleeping for [%d] seconds",
-			failures, sleep);
-		if (failures++ < MAX_FAILURES) {
-			/* Back-off exponentially */
-			apr_sleep(apr_time_from_sec(sleep));
-			sleep0 = sleep1;
-			sleep1 = sleep;
-			goto start_over;
-        } else {
-			return HTTP_GATEWAY_TIME_OUT;
+	//Search in cache
+	reqc = apr_hash_get(requestscache, r->hostname, APR_HASH_KEY_STRING);
+	if (!reqc || (reqc && reqc->expires < apr_time_now())){
+		if(!reqc)
+			reqc = apr_palloc(vhost_ldap_pool, sizeof(mod_vhost_ldap_request_t));
+		memset(reqc, 0, sizeof(mod_vhost_ldap_request_t));
+		reqc->aliases = (apr_array_header_t *)apr_array_make(vhost_ldap_pool, 5, sizeof(alias_t));
+		reqc->redirects = (apr_array_header_t *)apr_array_make(vhost_ldap_pool, 5, sizeof(alias_t));
+		//Search ldap
+		//TODO: Create a function
+		if(!ldapconn){
+			ldapconn = ldap_init(conf->host, conf->port);
+			ldap_set_option(ldapconn, LDAP_OPT_PROTOCOL_VERSION, &ldap_version);
+			if (ldap_simple_bind_s (ldapconn, conf->binddn, conf->bindpw) != LDAP_SUCCESS){
+				ldap_unbind(ldapconn);
+				ldapconn = NULL;
+				ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,"[mod_vhost_ldap_ng.c]: ldap connect error");
+				return DECLINED;
+			}
 		}
-	}
-
-	if (result == LDAP_NO_SUCH_OBJECT) {
-null:
-		if (conf->fallback && (is_fallback++ <= 0)) {
-			ap_log_rerror(APLOG_MARK, APLOG_NOTICE|APLOG_NOERRNO, 0, r,
-				"[mod_vhost_ldap_ng.c] translate: "
-				"virtual host %s not found, trying fallback %s",
-				hostname, conf->fallback);
-			hostname = conf->fallback;
-			goto fallback;
+		LDAPMessage* ldapmsg = NULL;
+		int ret = 0;
+		
+		char *myfilter = NULL;
+		myfilter = apr_psprintf( r->pool,"(&(%s)(|(apacheServerName=%s)(apacheServerAlias=%s)))",
+									conf->filter, r->hostname, r->hostname);
+		ret = ldap_search_s (ldapconn, conf->basedn, conf->scope, myfilter, (char **)attributes, 0, &ldapmsg);
+		if(ret != LDAP_SUCCESS){
+			return DECLINED;
 		}
-
-		ap_log_rerror(APLOG_MARK, APLOG_INFO|APLOG_NOERRNO, 0, r,
-			"[mod_vhost_ldap_ng.c] translate: "
-			"virtual host %s not found",
-		hostname);
-
-		return HTTP_NOT_FOUND;
-	}
-
-	/* handle bind failure */
-	if (result != LDAP_SUCCESS) {
-		ap_log_rerror(APLOG_MARK, APLOG_WARNING|APLOG_NOERRNO, 0, r, 
-			"[mod_vhost_ldap_ng.c] translate: "
-			"translate failed; virtual host %s; URI %s [%s]",
-			hostname, r->uri, ldap_err2string(result));
-		return HTTP_INTERNAL_SERVER_ERROR;
-	}
-
-	/* mark the user and DN */
-	reqc->dn = apr_pstrdup(r->pool, dn);
-	aliases = (apr_array_header_t *)apr_array_make(r->pool, 5, sizeof(alias_t));
-	redirects = (apr_array_header_t *)apr_array_make(r->pool, 5, sizeof(alias_t));
-	
-	if (vals) {
-		int i = 0;
-		char *cur;
-		while (attributes[i]) {
-			if(vals[i]){
-				if (strcasecmp (attributes[i], "apacheServerName") == 0) {
-					reqc->name = apr_pstrdup (r->pool, vals[i]);
-				} else if (strcasecmp (attributes[i], "apacheServerAdmin") == 0) {
-					reqc->admin = apr_pstrdup (r->pool, vals[i]);
-				} else if (strcasecmp (attributes[i], "apacheDocumentRoot") == 0) {
-					reqc->docroot = apr_pstrdup (r->pool, vals[i]);
-				} else if (strcasecmp (attributes[i], "apacheScriptAlias") == 0) {
-					cur = strstr(vals[i], " ");
-					if(cur - vals[i] > 1 ){
-						alias = apr_array_push(aliases);
-						attribute_tokenizer((char *)vals[i], &alias->src, &alias->dst, NULL);
-						isalias = 1;
-						alias->iscgi = 1;
-					}else{
-						ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
-					                "[mod_vhost_ldap_ng.c]: Wrong apacheScriptAlias paramter: %s", vals[i]);
+		LDAPMessage *vhostentry = ldap_first_entry (ldapconn, ldapmsg);
+		reqc->dn = ldap_get_dn(ldapconn, vhostentry);
+		ldap_memfree(reqc->dn);
+		int i=0;
+		while(attributes[i]){
+			int k =0;
+			char **eValues = ldap_get_values(ldapconn, vhostentry, attributes[i]);
+			if (eValues){
+				if (strcasecmp(attributes[i], "apacheServerName") == 0){
+					reqc->name = apr_pstrdup(r->pool, eValues[0]);
+				}else if(strcasecmp(attributes[i], "apacheServerAdmin") == 0){
+					reqc->admin = apr_pstrdup(r->pool, eValues[0]);
+				}else if(strcasecmp(attributes[i], "apacheDocumentRoot") == 0){
+					reqc->docroot = apr_pstrdup(r->pool, eValues[0]);
+				}else if(strcasecmp (attributes[i], "apacheAlias") == 0){
+					k = ldap_count_values (eValues);
+					while(k){
+						k--; 
+						if(strstr(eValues[k], " ")){
+							alias = apr_array_push(reqc->aliases);
+							attribute_tokenizer((char *)eValues[k], &alias->src, &alias->dst, NULL);
+							alias->iscgi = 0;
+							isalias = 1;
+						}else{
+							ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
+														"[mod_vhost_ldap_ng.c]: Wrong apacheAlias parameter: %s", eValues[k]);
+						}
 					}
-				} else if (strcasecmp (attributes[i], "apacheAlias") == 0) {
-					cur = strstr(vals[i], " ");
-					if(cur - vals[i] > 1 ){
-						alias = apr_array_push(aliases);
-						attribute_tokenizer((char *)vals[i], &alias->src, &alias->dst, NULL);
-						alias->iscgi = 0;
-						isalias = 1;
-					}else{
-						ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
-	                                                "[mod_vhost_ldap_ng.c]: Wrong apacheAlias parameter: %s", vals[i]);
+				}else if(strcasecmp (attributes[i], "apacheScriptAlias") == 0){
+					k = ldap_count_values (eValues);
+					while(k){
+						k--; 
+						if(strstr(eValues[k], " ")){
+							alias = apr_array_push(reqc->aliases);
+							attribute_tokenizer((char *)eValues[k], &alias->src, &alias->dst, NULL);
+							alias->iscgi = 1;
+							isalias = 1;
+						}else{
+							ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
+											"[mod_vhost_ldap_ng.c]: Wrong apacheAlias parameter: %s", eValues[k]);
+						}
 					}
-				} else if (strcasecmp (attributes[i], "apacheRedirect") == 0) {
-					cur = strstr(vals[i], " ");
-	                                if(cur - vals[i] > 0 ){
-						alias = apr_array_push(redirects);
-						attribute_tokenizer((char *)vals[i], &alias->src, &alias->dst, &alias->redir_status, NULL);
-	                                        alias->iscgi = 0;
-	                                        isalias = 1;
-	                                }else{
-	                                        ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
-	                                                "[mod_vhost_ldap_ng.c]: Wrong apacheRedirect parameter: %s", vals[i]);
-	                                }
-				} else if (strcasecmp (attributes[i], "apacheSuexecUid") == 0) {
-					reqc->uid = apr_pstrdup(r->pool, vals[i]);
-				} else if (strcasecmp (attributes[i], "apacheSuexecGid") == 0) {
-					reqc->gid = apr_pstrdup(r->pool, vals[i]);
-				} else if (strcasecmp (attributes[i], "apacheErrorLog") == 0) {
-					if(conf->rootdir && (strncmp(vals[i], "/", 1) != 0))
-			                        r->server->error_fname = apr_pstrcat(r->pool, conf->rootdir, vals[i], NULL);
+				}else if(strcasecmp (attributes[i], "apacheScriptAlias") == 0){
+					k = ldap_count_values (eValues);
+					while(k){
+						k--; 
+						if(strstr(eValues[k], " ")){
+							alias = apr_array_push(reqc->redirects);
+							attribute_tokenizer((char *)eValues[k], &alias->src, &alias->dst, NULL);
+							alias->iscgi = 0;
+							isalias = 1;
+						}else{
+							ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
+											"[mod_vhost_ldap_ng.c]: Wrong apacheAlias parameter: %s", eValues[k]);
+						}
+					}
+				}else if(strcasecmp(attributes[i], "apacheSuexecUid") == 0){
+					reqc->uid = apr_pstrdup(r->pool, eValues[0]);
+				}else if(strcasecmp(attributes[i], "apacheSuexecGid") == 0){
+					reqc->gid = apr_pstrdup(r->pool, eValues[0]);
+				}else if(strcasecmp (attributes[i], "apacheErrorLog") == 0){
+					if(conf->rootdir && (strncmp(eValues[0], "/", 1) != 0))
+						r->server->error_fname = apr_pstrcat(r->pool, conf->rootdir, eValues[0], NULL);
 					else
-						r->server->error_fname = (char *)vals[i];
+						r->server->error_fname = apr_pstrdup(r->pool, eValues[0]);;
 					apr_file_open(&r->server->error_log, r->server->error_fname,
 							APR_APPEND | APR_WRITE | APR_CREATE | APR_LARGEFILE,
 							APR_OS_DEFAULT, r->pool);
-
 				}
 			}
 			i++;
 		}
+		reqc->expires = apr_time_now() + apr_time_from_sec(1800);
+		apr_hash_set(requestscache, reqc->name, APR_HASH_KEY_STRING, reqc);
 	}
-
+	ap_set_module_config(r->request_config, &vhost_ldap_ng_module, reqc);
 	ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
 		"[mod_vhost_ldap_ng.c]: loaded from ldap: "
 		"apacheServerName: %s, "
@@ -686,10 +643,10 @@ null:
 		From mod_alias:
 		checks for redirects
 		*/
-		alias_t *cursor = (alias_t *)redirects->elts;
+		alias_t *cursor = (alias_t *)reqc->redirects->elts;
 		if (r->uri[0] != '/' && r->uri[0] != '\0') 
 			return DECLINED;
-		for(k = 0; k < redirects->nelts; k++){
+		for(k = 0; k < reqc->redirects->nelts; k++){
 			alias = (alias_t *) &cursor[k];
 			isalias = alias_matches(r->uri, alias->src);
 			if(isalias > 0){
@@ -708,8 +665,8 @@ null:
 			}
 		}
 		/* Checking for aliases */
-		cursor = (alias_t *)aliases->elts;
-		for(k = 0; k < aliases->nelts; k++){
+		cursor = (alias_t *)reqc->aliases->elts;
+		for(k = 0; k < reqc->aliases->nelts; k++){
 			alias = (alias_t *) &cursor[k];
 			isalias = alias_matches(r->uri, alias->src);
 			if(isalias>0)
@@ -798,9 +755,8 @@ null:
 			"[mod_vhost_ldap_ng.c] set_document_root: Warning: DocumentRoot [%s] does not exist",
 			reqc->docroot);
 		core->ap_document_root = reqc->docroot;
-		if(strcmp(r->handler, "Script") == 0)
+		if(r->handler && (strcmp(r->handler, "Script") == 0))
 			return OK;
-
 	}
 
 	/* Hack to allow post-processing by other modules (mod_rewrite, mod_alias) */
@@ -851,15 +807,13 @@ mod_vhost_ldap_register_hooks (apr_pool_t * p)
 	* Run before mod_rewrite
 	*/
 	static const char * const aszRewrite[]={ "mod_rewrite.c", NULL };
-
+	ap_hook_child_init(mod_vhost_ldap_child_init, NULL, NULL, APR_HOOK_MIDDLE);
 	ap_hook_post_config(mod_vhost_ldap_post_config, NULL, NULL, APR_HOOK_MIDDLE);
 	ap_hook_translate_name(mod_vhost_ldap_translate_name, NULL, aszRewrite, APR_HOOK_FIRST);
 #ifdef HAVE_UNIX_SUEXEC
 	ap_hook_get_suexec_identity(mod_vhost_ldap_get_suexec_id_doer, NULL, NULL, APR_HOOK_MIDDLE);
 #endif
-#if (APR_MAJOR_VERSION >= 1)
-	ap_hook_optional_fn_retrieve(ImportULDAPOptFn,NULL,NULL,APR_HOOK_MIDDLE);
-#endif
+
 }
 
 module AP_MODULE_DECLARE_DATA vhost_ldap_ng_module = {
