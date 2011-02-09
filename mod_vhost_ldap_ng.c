@@ -497,8 +497,8 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 		(core_server_config *)ap_get_module_config(r->server->module_config, &core_module);
 	char *realfile;
 	alias_t *alias = NULL;
-	int isalias = 0, i = 0;
-	
+	int isalias = 0, i = 0, ret = 0;
+	LDAPMessage *ldapmsg = NULL, *vhostentry = NULL;
 	// mod_vhost_ldap is disabled or we don't have LDAP Url
 	if ((conf->enabled != MVL_ENABLED)||(!conf->have_ldap_url)) {
 		return DECLINED;
@@ -524,19 +524,15 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 				return DECLINED;
 			}
 		}
-		LDAPMessage* ldapmsg = NULL;
-		int ret = 0;
-		
 		char *myfilter = NULL;
-		myfilter = apr_psprintf( r->pool,"(&(%s)(|(apacheServerName=%s)(apacheServerAlias=%s)))",
+		myfilter = apr_psprintf(r->pool,"(&(%s)(|(apacheServerName=%s)(apacheServerAlias=%s)))",
 									conf->filter, r->hostname, r->hostname);
 		ret = ldap_search_s (ldapconn, conf->basedn, conf->scope, myfilter, (char **)attributes, 0, &ldapmsg);
 		if(ret != LDAP_SUCCESS){
 			return DECLINED;
 		}
-		LDAPMessage *vhostentry = ldap_first_entry (ldapconn, ldapmsg);
+		vhostentry = ldap_first_entry (ldapconn, ldapmsg);
 		reqc->dn = ldap_get_dn(ldapconn, vhostentry);
-		ldap_memfree(reqc->dn);
 		while(attributes[i]){
 			int k =0;
 			char **eValues = ldap_get_values(ldapconn, vhostentry, attributes[i]);
@@ -547,6 +543,7 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 					reqc->admin = apr_pstrdup(vhost_ldap_pool, eValues[0]);
 				}else if(strcasecmp(attributes[i], "apacheDocumentRoot") == 0){
 					reqc->docroot = apr_pstrdup(r->pool, eValues[0]);
+					/* Make it absolute, relative to ServerRoot */
 					if(conf->rootdir && (strncmp(reqc->docroot, "/", 1) != 0))
 						reqc->docroot = apr_pstrcat(vhost_ldap_pool, conf->rootdir, reqc->docroot, NULL);
 					reqc->docroot = ap_server_root_relative(vhost_ldap_pool, reqc->docroot);
@@ -606,8 +603,11 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 							APR_OS_DEFAULT, r->pool);
 				}
 			}
+			ldap_value_free(eValues);
 			i++;
 		}
+		if(ldapmsg)
+			ldap_msgfree(ldapmsg);
 		reqc->expires = apr_time_now() + apr_time_from_sec(1800);
 		apr_hash_set(requestscache, reqc->name, APR_HASH_KEY_STRING, reqc);
 	}
@@ -620,7 +620,6 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 		"apacheSuexecUid: %s, "
 		"apacheSuexecGid: %s",
 		reqc->name, reqc->admin, reqc->docroot, reqc->uid, reqc->gid);
-	/* Make it absolute, relative to ServerRoot */
 	
 	if ((reqc->name == NULL)||(reqc->docroot == NULL)) {
 		ap_log_rerror(APLOG_MARK, APLOG_ERR|APLOG_NOERRNO, 0, r, 
