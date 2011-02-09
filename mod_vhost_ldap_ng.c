@@ -497,7 +497,7 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 		(core_server_config *)ap_get_module_config(r->server->module_config, &core_module);
 	char *realfile;
 	alias_t *alias = NULL;
-	int isalias = 0, i = 0, ret = 0;
+	int i = 0, ret = 0;
 	LDAPMessage *ldapmsg = NULL, *vhostentry = NULL;
 	// mod_vhost_ldap is disabled or we don't have LDAP Url
 	if ((conf->enabled != MVL_ENABLED)||(!conf->have_ldap_url)) {
@@ -551,11 +551,10 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 					k = ldap_count_values (eValues);
 					while(k){
 						k--; 
-						if(strstr(eValues[k], " ")){
+						if(strchr(eValues[k], ' ')){
 							alias = apr_array_push(reqc->aliases);
 							attribute_tokenizer((char *)eValues[k], &alias->src, &alias->dst, NULL);
 							alias->iscgi = 0;
-							isalias = 1;
 						}else{
 							ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
 														"[mod_vhost_ldap_ng.c]: Wrong apacheAlias parameter: %s", eValues[k]);
@@ -565,28 +564,26 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 					k = ldap_count_values (eValues);
 					while(k){
 						k--; 
-						if(strstr(eValues[k], " ")){
+						if(strchr(eValues[k], ' ')){
 							alias = apr_array_push(reqc->aliases);
 							attribute_tokenizer((char *)eValues[k], &alias->src, &alias->dst, NULL);
 							alias->iscgi = 1;
-							isalias = 1;
 						}else{
 							ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
-											"[mod_vhost_ldap_ng.c]: Wrong apacheAlias parameter: %s", eValues[k]);
+											"[mod_vhost_ldap_ng.c]: Wrong apacheScriptAlias parameter: %s", eValues[k]);
 						}
 					}
-				}else if(strcasecmp (attributes[i], "apacheScriptAlias") == 0){
+				}else if(strcasecmp (attributes[i], "apacheRedirect") == 0){
 					k = ldap_count_values (eValues);
 					while(k){
 						k--; 
-						if(strstr(eValues[k], " ")){
+						if(strchr(eValues[k], ' ')){
 							alias = apr_array_push(reqc->redirects);
 							attribute_tokenizer((char *)eValues[k], &alias->src, &alias->dst, NULL);
 							alias->iscgi = 0;
-							isalias = 1;
 						}else{
 							ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
-											"[mod_vhost_ldap_ng.c]: Wrong apacheAlias parameter: %s", eValues[k]);
+											"[mod_vhost_ldap_ng.c]: Wrong apacheRedirect parameter: %s", eValues[k]);
 						}
 					}
 				}else if(strcasecmp(attributes[i], "apacheSuexecUid") == 0){
@@ -603,7 +600,6 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 							APR_OS_DEFAULT, r->pool);
 				}
 			}
-			ldap_value_free(eValues);
 			i++;
 		}
 		if(ldapmsg)
@@ -627,73 +623,64 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 			"translate failed; ServerName or DocumentRoot not defined");
 		return HTTP_INTERNAL_SERVER_ERROR;
 	}
-	if (isalias) {
-		isalias = 0;
-		int k;
-		/*
-		From mod_alias:
-		checks for redirects
-		*/
-		alias_t *cursor = (alias_t *)reqc->redirects->elts;
-		if (r->uri[0] != '/' && r->uri[0] != '\0') 
-			return DECLINED;
-		for(k = 0; k < reqc->redirects->nelts; k++){
-			alias = (alias_t *) &cursor[k];
-			isalias = alias_matches(r->uri, alias->src);
-			if(isalias > 0){
-				apr_table_setn(r->headers_out, "Location", alias->dst);
-				if(alias->redir_status){
-					if (strcasecmp(alias->redir_status, "gone") == 0)
-						return  HTTP_GONE;
-					else if (strcasecmp(alias->redir_status, "permanent") == 0)
-						return HTTP_MOVED_PERMANENTLY;
-					else if (strcasecmp(alias->redir_status, "temp") == 0)
-						return HTTP_MOVED_TEMPORARILY;
-					else if (strcasecmp(alias->redir_status, "seeother") == 0)
-						return HTTP_SEE_OTHER;
-				}
-				return HTTP_MOVED_PERMANENTLY;
+
+	//From mod_alias: checking for redirects
+	alias_t *cursor = (alias_t *)reqc->redirects->elts;
+	if (r->uri[0] != '/' && r->uri[0] != '\0') 
+		return DECLINED;
+	for(i = 0; i < reqc->redirects->nelts; i++){
+		alias = (alias_t *) &cursor[i];
+		if(alias_matches(r->uri, alias->src)){
+			apr_table_setn(r->headers_out, "Location", alias->dst);
+			if(alias->redir_status){
+				if (strcasecmp(alias->redir_status, "gone") == 0)
+					return  HTTP_GONE;
+				else if (strcasecmp(alias->redir_status, "permanent") == 0)
+					return HTTP_MOVED_PERMANENTLY;
+				else if (strcasecmp(alias->redir_status, "temp") == 0)
+					return HTTP_MOVED_TEMPORARILY;
+				else if (strcasecmp(alias->redir_status, "seeother") == 0)
+					return HTTP_SEE_OTHER;
 			}
+			return HTTP_MOVED_PERMANENTLY;
 		}
-		/* Checking for aliases */
-		cursor = (alias_t *)reqc->aliases->elts;
-		for(k = 0; k < reqc->aliases->nelts; k++){
-			alias = (alias_t *) &cursor[k];
-			isalias = alias_matches(r->uri, alias->src);
-			if(isalias>0)
-				break;
-		}
-		
 	}
-	if (isalias) {
-		/* Set exact filename for CGI script */
-		realfile = apr_pstrcat(r->pool, alias->dst, r->uri + strlen(alias->src), NULL);
-		/* Add apacheRootDir config param IF realfile is a realative path*/
-		if(conf->rootdir && (strncmp(alias->dst, "/", 1) != 0))
-			realfile = apr_pstrcat(r->pool, conf->rootdir, realfile, NULL);
-		/* Let apache normalize the path */
-		if((realfile = ap_server_root_relative(r->pool, realfile))) {
-			ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
-				"[mod_vhost_ldap_ng.c]: ap_document_root is: %s",
-				ap_document_root(r));
-			r->filename = realfile;
-			if(alias->iscgi){
-				//r->handler = "cgi-script";
-				r->handler = "Script";
-				apr_table_setn(r->notes, "alias-forced-type", r->handler);
+	
+	/* Checking for aliases */
+	cursor = (alias_t *)reqc->aliases->elts;
+	for(i = 0; i < reqc->aliases->nelts; i++){
+		alias = (alias_t *) &cursor[i];
+		if (alias_matches(r->uri, alias->src)) {
+			/* Set exact filename for CGI script */
+			realfile = apr_pstrcat(r->pool, alias->dst, r->uri + strlen(alias->src), NULL);
+			/* Add apacheRootDir config param IF realfile is a realative path*/
+			if(conf->rootdir && (strncmp(alias->dst, "/", 1) != 0))
+				realfile = apr_pstrcat(r->pool, conf->rootdir, realfile, NULL);
+			/* Let apache normalize the path */
+			if((realfile = ap_server_root_relative(r->pool, realfile))) {
+				ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
+					"[mod_vhost_ldap_ng.c]: ap_document_root is: %s",
+					ap_document_root(r));
+				r->filename = realfile;
+				if(alias->iscgi){
+					//r->handler = "cgi-script";
+					r->handler = "Script";
+					apr_table_setn(r->notes, "alias-forced-type", r->handler);
+				}
+				return OK;
 			}
 			return OK;
+		} else if (r->uri[0] == '/') {
+			/* we don't set r->filename here, and let other modules do it
+			* this allows other modules (mod_rewrite.c) to work as usual
+			*/
+			/* r->filename = apr_pstrcat (r->pool, reqc->docroot, r->uri, NULL); */
+		} else {
+			/* We don't handle non-file requests here */
+			return DECLINED;
 		}
-		return OK;
-	} else if (r->uri[0] == '/') {
-		/* we don't set r->filename here, and let other modules do it
-		* this allows other modules (mod_rewrite.c) to work as usual
-		*/
-		/* r->filename = apr_pstrcat (r->pool, reqc->docroot, r->uri, NULL); */
-	} else {
-		/* We don't handle non-file requests here */
-		return DECLINED;
 	}
+	
 	if ((r->server = apr_pmemdup(r->pool, r->server, sizeof(*r->server))) == NULL) {
 		ap_log_rerror(APLOG_MARK, APLOG_ERR|APLOG_NOERRNO, 0, r, 
 			"[mod_vhost_ldap_ng.c] translate: "
