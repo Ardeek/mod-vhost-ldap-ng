@@ -65,7 +65,9 @@ module AP_MODULE_DECLARE_DATA vhost_ldap_ng_module;
 
 static LDAP *ldapconn;
 static apr_pool_t *vhost_ldap_pool = NULL;
+static apr_hash_t *requestscache;
 int ldap_version = LDAP_VERSION3;
+
 typedef enum {
 	MVL_UNSET, MVL_DISABLED, MVL_ENABLED
 } mod_vhost_ldap_status_e;
@@ -108,8 +110,6 @@ typedef struct mod_vhost_ldap_request_t {
 	apr_array_header_t *aliases;
 	apr_array_header_t *redirects;	
 } mod_vhost_ldap_request_t;
-
-static apr_hash_t *requestscache;
 
 typedef struct alias_t {
 	char *src;
@@ -472,27 +472,16 @@ static int attribute_tokenizer(char *instr, ...)
 static apr_status_t mod_vhost_ldap_child_exit(void *data)
 {
 	if (ldapconn)
-		ldap_unbind (ldapconn);
+		ldap_unbind(ldapconn);
 	return APR_SUCCESS;
 }
 
 static void mod_vhost_ldap_child_init(apr_pool_t * p, server_rec * s)
 {
-	mod_vhost_ldap_config_t *conf =
-		(mod_vhost_ldap_config_t *)ap_get_module_config(s->module_config, &vhost_ldap_ng_module);
 	if(!vhost_ldap_pool)
 		apr_pool_create(&vhost_ldap_pool, p);
 	if(!requestscache)
 		requestscache = apr_hash_make(vhost_ldap_pool);
-	if(!ldapconn){
-		ldapconn = ldap_init(conf->host, conf->port);
-		ldap_set_option(ldapconn, LDAP_OPT_PROTOCOL_VERSION, &ldap_version);
-		if (ldap_simple_bind_s (ldapconn, conf->binddn, conf->bindpw) != LDAP_SUCCESS){
-			ldap_unbind(ldapconn);
-			ldapconn = NULL;
-			ap_log_error(APLOG_MARK, APLOG_WARNING, 0, s, "[mod_vhost_ldap_ng.c]: ldap connect error");
-		}
-	}
 	apr_pool_cleanup_register(p, s, mod_vhost_ldap_child_exit, mod_vhost_ldap_child_exit);
 }
 
@@ -507,8 +496,8 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 	core_server_config *core =
 		(core_server_config *)ap_get_module_config(r->server->module_config, &core_module);
 	char *realfile;
-		alias_t *alias = NULL;
-	int isalias = 0;
+	alias_t *alias = NULL;
+	int isalias = 0, i = 0;
 	
 	// mod_vhost_ldap is disabled or we don't have LDAP Url
 	if ((conf->enabled != MVL_ENABLED)||(!conf->have_ldap_url)) {
@@ -548,17 +537,19 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 		LDAPMessage *vhostentry = ldap_first_entry (ldapconn, ldapmsg);
 		reqc->dn = ldap_get_dn(ldapconn, vhostentry);
 		ldap_memfree(reqc->dn);
-		int i=0;
 		while(attributes[i]){
 			int k =0;
 			char **eValues = ldap_get_values(ldapconn, vhostentry, attributes[i]);
 			if (eValues){
 				if (strcasecmp(attributes[i], "apacheServerName") == 0){
-					reqc->name = apr_pstrdup(r->pool, eValues[0]);
+					reqc->name = apr_pstrdup(vhost_ldap_pool, eValues[0]);
 				}else if(strcasecmp(attributes[i], "apacheServerAdmin") == 0){
-					reqc->admin = apr_pstrdup(r->pool, eValues[0]);
+					reqc->admin = apr_pstrdup(vhost_ldap_pool, eValues[0]);
 				}else if(strcasecmp(attributes[i], "apacheDocumentRoot") == 0){
 					reqc->docroot = apr_pstrdup(r->pool, eValues[0]);
+					if(conf->rootdir && (strncmp(reqc->docroot, "/", 1) != 0))
+						reqc->docroot = apr_pstrcat(vhost_ldap_pool, conf->rootdir, reqc->docroot, NULL);
+					reqc->docroot = ap_server_root_relative(vhost_ldap_pool, reqc->docroot);
 				}else if(strcasecmp (attributes[i], "apacheAlias") == 0){
 					k = ldap_count_values (eValues);
 					while(k){
@@ -602,9 +593,9 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 						}
 					}
 				}else if(strcasecmp(attributes[i], "apacheSuexecUid") == 0){
-					reqc->uid = apr_pstrdup(r->pool, eValues[0]);
+					reqc->uid = apr_pstrdup(vhost_ldap_pool, eValues[0]);
 				}else if(strcasecmp(attributes[i], "apacheSuexecGid") == 0){
-					reqc->gid = apr_pstrdup(r->pool, eValues[0]);
+					reqc->gid = apr_pstrdup(vhost_ldap_pool, eValues[0]);
 				}else if(strcasecmp (attributes[i], "apacheErrorLog") == 0){
 					if(conf->rootdir && (strncmp(eValues[0], "/", 1) != 0))
 						r->server->error_fname = apr_pstrcat(r->pool, conf->rootdir, eValues[0], NULL);
@@ -629,7 +620,8 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 		"apacheSuexecUid: %s, "
 		"apacheSuexecGid: %s",
 		reqc->name, reqc->admin, reqc->docroot, reqc->uid, reqc->gid);
-
+	/* Make it absolute, relative to ServerRoot */
+	
 	if ((reqc->name == NULL)||(reqc->docroot == NULL)) {
 		ap_log_rerror(APLOG_MARK, APLOG_ERR|APLOG_NOERRNO, 0, r, 
 			"[mod_vhost_ldap_ng.c] translate: "
@@ -734,11 +726,6 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 	ap_set_module_config(r->server->module_config, &core_module, core);
 
 	/* Stolen from server/core.c */
-
-	/* Make it absolute, relative to ServerRoot */
-	if(conf->rootdir && (strncmp(reqc->docroot, "/", 1) != 0))
-		reqc->docroot = apr_pstrcat(r->pool, conf->rootdir, reqc->docroot, NULL);
-	reqc->docroot = ap_server_root_relative(r->pool, reqc->docroot);
 
 	if (reqc->docroot == NULL) {
 		ap_log_rerror(APLOG_MARK, APLOG_WARNING, 0, r, 
