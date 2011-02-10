@@ -489,17 +489,19 @@ static void* get_from_requestscache(request_rec *r)
 	mod_vhost_ldap_request_t *reqc = NULL;
 	if(requestscache){
 		reqc = apr_hash_get(requestscache, r->hostname, APR_HASH_KEY_STRING);
-		if(reqc && reqc->expires < apr_time_now())
+		if(reqc && reqc->expires > apr_time_now())
 			return reqc;
 	}
 	return NULL;
 }
 
-static void add_to_requestscache(mod_vhost_ldap_request_t *reqc)
+static void add_to_requestscache(mod_vhost_ldap_request_t *reqc, request_rec *r)
 {
+	reqc->expires = apr_time_now() + apr_time_from_sec(1800);
 	if(!requestscache)
 		requestscache = apr_hash_make(vhost_ldap_pool);
-	apr_hash_set(requestscache, reqc->name, APR_HASH_KEY_STRING, reqc);
+	if(r->hostname)
+		apr_hash_set(requestscache, r->hostname, APR_HASH_KEY_STRING, reqc);
 }
 
 #define FILTER_LENGTH MAX_STRING_LEN
@@ -621,8 +623,7 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 		}
 		if(ldapmsg)
 			ldap_msgfree(ldapmsg);
-		reqc->expires = apr_time_now() + apr_time_from_sec(1800);
-		add_to_requestscache(reqc);	
+		add_to_requestscache(reqc, r);	
 	}
 	ap_set_module_config(r->request_config, &vhost_ldap_ng_module, reqc);
 	ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
