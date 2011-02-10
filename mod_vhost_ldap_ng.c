@@ -65,8 +65,7 @@ module AP_MODULE_DECLARE_DATA vhost_ldap_ng_module;
 
 static LDAP *ldapconn;
 static apr_pool_t *vhost_ldap_pool = NULL;
-static apr_hash_t *requestscache;
-int ldap_version = LDAP_VERSION3;
+static apr_hash_t *requestscache = NULL;
 
 typedef enum {
 	MVL_UNSET, MVL_DISABLED, MVL_ENABLED
@@ -485,27 +484,44 @@ static void mod_vhost_ldap_child_init(apr_pool_t * p, server_rec * s)
 	apr_pool_cleanup_register(p, s, mod_vhost_ldap_child_exit, mod_vhost_ldap_child_exit);
 }
 
+static void* get_from_requestscache(request_rec *r)
+{
+	mod_vhost_ldap_request_t *reqc = NULL;
+	if(requestscache){
+		reqc = apr_hash_get(requestscache, r->hostname, APR_HASH_KEY_STRING);
+		if(reqc && reqc->expires < apr_time_now())
+			return reqc;
+	}
+	return NULL;
+}
 
+static void add_to_requestscache(mod_vhost_ldap_request_t *reqc)
+{
+	if(!requestscache)
+		requestscache = apr_hash_make(vhost_ldap_pool);
+	apr_hash_set(requestscache, reqc->name, APR_HASH_KEY_STRING, reqc);
+}
 
 #define FILTER_LENGTH MAX_STRING_LEN
 static int mod_vhost_ldap_translate_name(request_rec *r)
 {
-	mod_vhost_ldap_request_t *reqc;
+	mod_vhost_ldap_request_t *reqc = NULL;
 	mod_vhost_ldap_config_t *conf =
 	(mod_vhost_ldap_config_t *)ap_get_module_config(r->server->module_config, &vhost_ldap_ng_module);
 	core_server_config *core =
 		(core_server_config *)ap_get_module_config(r->server->module_config, &core_module);
-	char *realfile;
+	char *realfile = NULL;
+	char *myfilter = NULL;
 	alias_t *alias = NULL;
 	int i = 0, ret = 0;
 	LDAPMessage *ldapmsg = NULL, *vhostentry = NULL;
 	// mod_vhost_ldap is disabled or we don't have LDAP Url
-	if ((conf->enabled != MVL_ENABLED)||(!conf->have_ldap_url)) {
+	if ((conf->enabled != MVL_ENABLED)||(!conf->have_ldap_url)||(!r->hostname)) {
 		return DECLINED;
 	}
 
 	//Search in cache
-	reqc = apr_hash_get(requestscache, r->hostname, APR_HASH_KEY_STRING);
+	reqc = (mod_vhost_ldap_request_t *)get_from_requestscache(r);
 	if (!reqc || (reqc && reqc->expires < apr_time_now())){
 		if(!reqc)
 			reqc = apr_palloc(vhost_ldap_pool, sizeof(mod_vhost_ldap_request_t));
@@ -515,6 +531,7 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 		//Search ldap
 		//TODO: Create a function
 		if(!ldapconn){
+			int ldap_version = LDAP_VERSION3;
 			ldapconn = ldap_init(conf->host, conf->port);
 			ldap_set_option(ldapconn, LDAP_OPT_PROTOCOL_VERSION, &ldap_version);
 			if (ldap_simple_bind_s (ldapconn, conf->binddn, conf->bindpw) != LDAP_SUCCESS){
@@ -524,19 +541,22 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 				return DECLINED;
 			}
 		}
-		char *myfilter = NULL;
+
 		myfilter = apr_psprintf(r->pool,"(&(%s)(|(apacheServerName=%s)(apacheServerAlias=%s)))",
 									conf->filter, r->hostname, r->hostname);
 		ret = ldap_search_s (ldapconn, conf->basedn, conf->scope, myfilter, (char **)attributes, 0, &ldapmsg);
 		if(ret != LDAP_SUCCESS){
 			return DECLINED;
 		}
+		
 		vhostentry = ldap_first_entry (ldapconn, ldapmsg);
 		reqc->dn = ldap_get_dn(ldapconn, vhostentry);
+		
 		while(attributes[i]){
 			int k =0;
 			char **eValues = ldap_get_values(ldapconn, vhostentry, attributes[i]);
 			if (eValues){
+				k = ldap_count_values (eValues);
 				if (strcasecmp(attributes[i], "apacheServerName") == 0){
 					reqc->name = apr_pstrdup(vhost_ldap_pool, eValues[0]);
 				}else if(strcasecmp(attributes[i], "apacheServerAdmin") == 0){
@@ -548,7 +568,6 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 						reqc->docroot = apr_pstrcat(vhost_ldap_pool, conf->rootdir, reqc->docroot, NULL);
 					reqc->docroot = ap_server_root_relative(vhost_ldap_pool, reqc->docroot);
 				}else if(strcasecmp (attributes[i], "apacheAlias") == 0){
-					k = ldap_count_values (eValues);
 					while(k){
 						k--; 
 						if(strchr(eValues[k], ' ')){
@@ -557,11 +576,10 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 							alias->iscgi = 0;
 						}else{
 							ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
-														"[mod_vhost_ldap_ng.c]: Wrong apacheAlias parameter: %s", eValues[k]);
+											"[mod_vhost_ldap_ng.c]: Wrong apacheAlias parameter: %s", eValues[k]);
 						}
 					}
 				}else if(strcasecmp (attributes[i], "apacheScriptAlias") == 0){
-					k = ldap_count_values (eValues);
 					while(k){
 						k--; 
 						if(strchr(eValues[k], ' ')){
@@ -574,7 +592,6 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 						}
 					}
 				}else if(strcasecmp (attributes[i], "apacheRedirect") == 0){
-					k = ldap_count_values (eValues);
 					while(k){
 						k--; 
 						if(strchr(eValues[k], ' ')){
@@ -605,7 +622,7 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 		if(ldapmsg)
 			ldap_msgfree(ldapmsg);
 		reqc->expires = apr_time_now() + apr_time_from_sec(1800);
-		apr_hash_set(requestscache, reqc->name, APR_HASH_KEY_STRING, reqc);
+		add_to_requestscache(reqc);	
 	}
 	ap_set_module_config(r->request_config, &vhost_ldap_ng_module, reqc);
 	ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
