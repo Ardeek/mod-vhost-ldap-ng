@@ -89,17 +89,13 @@ typedef struct mod_vhost_ldap_config_t {
 	char *basedn;			/* Base DN to do all searches from */
 	int scope;				/* Scope of the search */
 	char *filter;			/* Filter to further limit the search  */
-	deref_options deref;		/* how to handle alias dereferening */
-
+	
 	char *binddn;			/* DN to bind to server (can be NULL) */
 	char *bindpw;			/* Password to bind to server (can be NULL) */
-
-	int have_deref;                     /* Set if we have found an Deref option */
 	int have_ldap_url;			/* Set if we have found an LDAP url */
-
 	int secure;				/* True if SSL connections are requested */
-
-	char *fallback;                     /* Fallback virtual host */
+	char *fallback_name;    /* Fallback virtual host ServerName*/
+	char *fallback_docroot;	/* Fallback virtual host documentroot*/
 	char *rootdir;
 	char *php_includepath;
 } mod_vhost_ldap_config_t;
@@ -112,6 +108,7 @@ typedef struct mod_vhost_ldap_request_t {
 	char *cgiroot;			/* ScriptAlias */
 	char *uid;				/* Suexec Uid */
 	char *gid;				/* Suexec Gid */
+	int decline;
 	apr_time_t expires;		/* Expire time from cache */
 	apr_array_header_t *aliases;
 	apr_array_header_t *redirects;	
@@ -177,11 +174,10 @@ mod_vhost_ldap_create_server_config (apr_pool_t *p, server_rec *s)
 
 	conf->enabled = MVL_UNSET;
 	conf->have_ldap_url = 0;
-	conf->have_deref = 0;
 	conf->binddn = NULL;
 	conf->bindpw = NULL;
-	conf->deref = always;
-	conf->fallback = NULL;
+	conf->fallback_name = NULL;
+	conf->fallback_docroot = NULL;
 	conf->rootdir = NULL;
 	conf->php_includepath = NULL;
 	return conf;
@@ -221,19 +217,10 @@ mod_vhost_ldap_merge_server_config(apr_pool_t *p, void *parentv, void *childv)
 		conf->secure = parent->secure;
 		conf->php_includepath = parent->php_includepath;
 	}
-	if (child->have_deref) {
-		conf->have_deref = child->have_deref;
-		conf->deref = child->deref;
-	} else {
-		conf->have_deref = parent->have_deref;
-		conf->deref = parent->deref;
-	}
-
 	conf->binddn = (child->binddn ? child->binddn : parent->binddn);
 	conf->bindpw = (child->bindpw ? child->bindpw : parent->bindpw);
-
-	conf->fallback = (child->fallback ? child->fallback : parent->fallback);
-	
+	conf->fallback_name = (child->fallback_name ? child->fallback_name : parent->fallback_name);
+	conf->fallback_docroot = (child->fallback_docroot ? child->fallback_docroot : parent->fallback_docroot);
 	conf->rootdir = child->rootdir ? child->rootdir : parent->rootdir;
 	
 	return conf;
@@ -387,34 +374,19 @@ static const char *mod_vhost_ldap_set_bindpw(cmd_parms *cmd, void *dummy, const 
 	return NULL;
 }
 
-static const char *mod_vhost_ldap_set_deref(cmd_parms *cmd, void *dummy, const char *deref)
-{
-	mod_vhost_ldap_config_t *conf = 
-	(mod_vhost_ldap_config_t *)ap_get_module_config (cmd->server->module_config, &vhost_ldap_ng_module);
-
-	if (strcmp(deref, "never") == 0 || strcasecmp(deref, "off") == 0) {
-		conf->deref = never;
-		conf->have_deref = 1;
-	} else if (strcmp(deref, "searching") == 0) {
-		conf->deref = searching;
-		conf->have_deref = 1;
-	} else if (strcmp(deref, "finding") == 0) {
-		conf->deref = finding;
-		conf->have_deref = 1;
-	} else if (strcmp(deref, "always") == 0 || strcasecmp(deref, "on") == 0) {
-		conf->deref = always;
-		conf->have_deref = 1;
-	} else {
-		return "Unrecognized value for VhostLDAPAliasDereference directive";
-	}
-	return NULL;
-}
-
-static const char *mod_vhost_ldap_set_fallback(cmd_parms *cmd, void *dummy, const char *fallback)
+static const char *mod_vhost_ldap_set_fallback_name(cmd_parms *cmd, void *dummy, const char *fallback)
 {
 	mod_vhost_ldap_config_t *conf =
 	(mod_vhost_ldap_config_t *)ap_get_module_config(cmd->server->module_config, &vhost_ldap_ng_module);
-	conf->fallback = apr_pstrdup(cmd->pool, fallback);
+	conf->fallback_name = apr_pstrdup(cmd->pool, fallback);
+	return NULL;
+}
+
+static const char *mod_vhost_ldap_set_fallback_docroot(cmd_parms *cmd, void *dummy, const char *fallback)
+{
+	mod_vhost_ldap_config_t *conf =
+	(mod_vhost_ldap_config_t *)ap_get_module_config(cmd->server->module_config, &vhost_ldap_ng_module);
+	conf->fallback_docroot = apr_pstrdup(cmd->pool, fallback);
 	return NULL;
 }
 
@@ -446,13 +418,12 @@ command_rec mod_vhost_ldap_cmds[] = {
 	AP_INIT_FLAG("VhostLDAPEnabled", mod_vhost_ldap_set_enabled, NULL, RSRC_CONF,
 					"Set to off to disable vhost_ldap, even if it's been enabled in a higher tree"),
 
-	AP_INIT_TAKE1("VhostLDAPDereferenceAliases", mod_vhost_ldap_set_deref, NULL, RSRC_CONF,
-					"Determines how aliases are handled during a search. Can be one of the"
-					"values \"never\", \"searching\", \"finding\", or \"always\". "
-					"Defaults to always."),
-
-	AP_INIT_TAKE1("VhostLDAPFallback", mod_vhost_ldap_set_fallback, NULL, RSRC_CONF,
+	AP_INIT_TAKE1("VhostLDAPFallbackName", mod_vhost_ldap_set_fallback_name, NULL, RSRC_CONF,
 					"Set default virtual host which will be used when requested hostname"
+					"is not found in LDAP database. This option can be used to display"
+					"\"virtual host not found\" type of page."),
+	AP_INIT_TAKE1("VhostLDAPFallbackDocumentRoot", mod_vhost_ldap_set_fallback_docroot, NULL, RSRC_CONF,
+					"Set default virtual host Document Root which will be used when requested hostname"
 					"is not found in LDAP database. This option can be used to display"
 					"\"virtual host not found\" type of page."),
 	AP_INIT_TAKE1("VhostLDAProotdir", mod_vhost_ldap_set_rootdir, NULL, RSRC_CONF, "Configurable rootDir for vhosts"),
@@ -549,23 +520,21 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 
 	//Search in cache
 	reqc = (mod_vhost_ldap_request_t *)get_from_requestscache(r);
-	if (!reqc || (reqc && reqc->expires < apr_time_now())){
-		if(!reqc)
-			reqc = apr_palloc(vhost_ldap_pool, sizeof(mod_vhost_ldap_request_t));
+	if(!reqc){
+		reqc = apr_palloc(vhost_ldap_pool, sizeof(mod_vhost_ldap_request_t));
 		memset(reqc, 0, sizeof(mod_vhost_ldap_request_t));
-		reqc->aliases = (apr_array_header_t *)apr_array_make(vhost_ldap_pool, 5, sizeof(alias_t));
-		reqc->redirects = (apr_array_header_t *)apr_array_make(vhost_ldap_pool, 5, sizeof(alias_t));
+	}
+	if (reqc->expires < apr_time_now()){
 		//Search ldap
 		//TODO: Create a function
-
 		while(!ldapconnect(&ld, conf) && i<2){
 			i++;	
 		}
 		if(i == 2){
 			ap_log_rerror(APLOG_MARK, APLOG_ERR|APLOG_NOERRNO, 0, r, 
 							"[mod_vhost_ldap_ng.c] Cannot connect to LDAP Server");
-				conf->enabled = MVL_DISABLED;
-				return HTTP_GATEWAY_TIME_OUT;
+			conf->enabled = MVL_DISABLED;
+			return HTTP_GATEWAY_TIME_OUT;
 		}
 
 		myfilter = apr_psprintf(r->pool,"(&(%s)(|(apacheServerName=%s)(apacheServerAlias=%s)))",
@@ -575,81 +544,97 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 		if(ret != LDAP_SUCCESS){//SIGPIPE?
 			return DECLINED;
 		}
-		vhostentry = ldap_first_entry (ld, ldapmsg);
-		reqc->dn = ldap_get_dn(ld, vhostentry);
-		i=0;
-		while(attributes[i]){
-			int k = 0;
-			char **eValues = ldap_get_values(ld, vhostentry, attributes[i]);
-			if (eValues){
-				k = ldap_count_values (eValues);
-				if (strcasecmp(attributes[i], "apacheServerName") == 0){
-					reqc->name = apr_pstrdup(vhost_ldap_pool, eValues[0]);
-				}else if(strcasecmp(attributes[i], "apacheServerAdmin") == 0){
-					reqc->admin = apr_pstrdup(vhost_ldap_pool, eValues[0]);
-				}else if(strcasecmp(attributes[i], "apacheDocumentRoot") == 0){
-					reqc->docroot = apr_pstrdup(r->pool, eValues[0]);
-					/* Make it absolute, relative to ServerRoot */
-					if(conf->rootdir && (strncmp(reqc->docroot, "/", 1) != 0))
-						reqc->docroot = apr_pstrcat(vhost_ldap_pool, conf->rootdir, reqc->docroot, NULL);
-					reqc->docroot = ap_server_root_relative(vhost_ldap_pool, reqc->docroot);
-				}else if(strcasecmp (attributes[i], "apacheAlias") == 0){
-					while(k){
-						k--; 
-						if(strchr(eValues[k], ' ')){
-							alias = apr_array_push(reqc->aliases);
-							attribute_tokenizer((char *)eValues[k], &alias->src, &alias->dst, NULL);
-							alias->iscgi = 0;
-						}else{
-							ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
-											"[mod_vhost_ldap_ng.c]: Wrong apacheAlias parameter: %s", eValues[k]);
-						}
-					}
-				}else if(strcasecmp (attributes[i], "apacheScriptAlias") == 0){
-					while(k){
-						k--; 
-						if(strchr(eValues[k], ' ')){
-							alias = apr_array_push(reqc->aliases);
-							attribute_tokenizer((char *)eValues[k], &alias->src, &alias->dst, NULL);
-							alias->iscgi = 1;
-						}else{
-							ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
-											"[mod_vhost_ldap_ng.c]: Wrong apacheScriptAlias parameter: %s", eValues[k]);
-						}
-					}
-				}else if(strcasecmp (attributes[i], "apacheRedirect") == 0){
-					while(k){
-						k--; 
-						if(strchr(eValues[k], ' ')){
-							alias = apr_array_push(reqc->redirects);
-							attribute_tokenizer((char *)eValues[k], &alias->src, &alias->dst, NULL);
-							alias->iscgi = 0;
-						}else{
-							ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
-											"[mod_vhost_ldap_ng.c]: Wrong apacheRedirect parameter: %s", eValues[k]);
-						}
-					}
-				}else if(strcasecmp(attributes[i], "apacheSuexecUid") == 0){
-					reqc->uid = apr_pstrdup(vhost_ldap_pool, eValues[0]);
-				}else if(strcasecmp(attributes[i], "apacheSuexecGid") == 0){
-					reqc->gid = apr_pstrdup(vhost_ldap_pool, eValues[0]);
-				}else if(strcasecmp (attributes[i], "apacheErrorLog") == 0){
-					if(conf->rootdir && (strncmp(eValues[0], "/", 1) != 0))
-						r->server->error_fname = apr_pstrcat(r->pool, conf->rootdir, eValues[0], NULL);
-					else
-						r->server->error_fname = apr_pstrdup(r->pool, eValues[0]);;
-					apr_file_open(&r->server->error_log, r->server->error_fname,
-							APR_APPEND | APR_WRITE | APR_CREATE | APR_LARGEFILE,
-							APR_OS_DEFAULT, r->pool);
-				}
+		if(ldap_count_entries(ld, ldapmsg)!=1){
+			if(!conf->fallback_name || !conf->fallback_docroot){
+				reqc->name = apr_pstrdup(vhost_ldap_pool, r->hostname);
+				reqc->decline = DECLINED;
+				add_to_requestscache(reqc, r);
+				return DECLINED;
+			}else{
+				reqc->name = conf->fallback_name;
+				reqc->docroot = conf->fallback_docroot;
 			}
-			i++;
+		}else{
+			reqc->aliases = (apr_array_header_t *)apr_array_make(vhost_ldap_pool, 2, sizeof(alias_t));
+			reqc->redirects = (apr_array_header_t *)apr_array_make(vhost_ldap_pool, 2, sizeof(alias_t));
+			vhostentry = ldap_first_entry (ld, ldapmsg);
+			reqc->dn = ldap_get_dn(ld, vhostentry);
+			i=0;
+			while(attributes[i]){
+				int k = 0;
+				char **eValues = ldap_get_values(ld, vhostentry, attributes[i]);
+				if (eValues){
+					k = ldap_count_values (eValues);
+					if (strcasecmp(attributes[i], "apacheServerName") == 0){
+						reqc->name = apr_pstrdup(vhost_ldap_pool, eValues[0]);
+					}else if(strcasecmp(attributes[i], "apacheServerAdmin") == 0){
+						reqc->admin = apr_pstrdup(vhost_ldap_pool, eValues[0]);
+					}else if(strcasecmp(attributes[i], "apacheDocumentRoot") == 0){
+						reqc->docroot = apr_pstrdup(r->pool, eValues[0]);
+						/* Make it absolute, relative to ServerRoot */
+						if(conf->rootdir && (strncmp(reqc->docroot, "/", 1) != 0))
+							reqc->docroot = apr_pstrcat(vhost_ldap_pool, conf->rootdir, reqc->docroot, NULL);
+						reqc->docroot = ap_server_root_relative(vhost_ldap_pool, reqc->docroot);
+					}else if(strcasecmp (attributes[i], "apacheAlias") == 0){
+						while(k){
+							k--; 
+							if(strchr(eValues[k], ' ')){
+								alias = apr_array_push(reqc->aliases);
+								attribute_tokenizer((char *)eValues[k], &alias->src, &alias->dst, NULL);
+								alias->iscgi = 0;
+							}else{
+								ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
+												"[mod_vhost_ldap_ng.c]: Wrong apacheAlias parameter: %s", eValues[k]);
+							}
+						}
+					}else if(strcasecmp (attributes[i], "apacheScriptAlias") == 0){
+						while(k){
+							k--; 
+							if(strchr(eValues[k], ' ')){
+								alias = apr_array_push(reqc->aliases);
+								attribute_tokenizer((char *)eValues[k], &alias->src, &alias->dst, NULL);
+								alias->iscgi = 1;
+							}else{
+								ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
+												"[mod_vhost_ldap_ng.c]: Wrong apacheScriptAlias parameter: %s", eValues[k]);
+							}
+						}
+					}else if(strcasecmp (attributes[i], "apacheRedirect") == 0){
+						while(k){
+							k--; 
+							if(strchr(eValues[k], ' ')){
+								alias = apr_array_push(reqc->redirects);
+								attribute_tokenizer((char *)eValues[k], &alias->src, &alias->dst, NULL);
+								alias->iscgi = 0;
+							}else{
+								ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
+												"[mod_vhost_ldap_ng.c]: Wrong apacheRedirect parameter: %s", eValues[k]);
+							}
+						}
+					}else if(strcasecmp(attributes[i], "apacheSuexecUid") == 0){
+						reqc->uid = apr_pstrdup(vhost_ldap_pool, eValues[0]);
+					}else if(strcasecmp(attributes[i], "apacheSuexecGid") == 0){
+						reqc->gid = apr_pstrdup(vhost_ldap_pool, eValues[0]);
+					}else if(strcasecmp (attributes[i], "apacheErrorLog") == 0){
+						if(conf->rootdir && (strncmp(eValues[0], "/", 1) != 0))
+							r->server->error_fname = apr_pstrcat(r->pool, conf->rootdir, eValues[0], NULL);
+						else
+							r->server->error_fname = apr_pstrdup(r->pool, eValues[0]);;
+						apr_file_open(&r->server->error_log, r->server->error_fname,
+								APR_APPEND | APR_WRITE | APR_CREATE | APR_LARGEFILE,
+								APR_OS_DEFAULT, r->pool);
+					}
+				}
+				i++;
+			}
 		}
 		if(ldapmsg)
 			ldap_msgfree(ldapmsg);
 		ldapdestroy(&ld);
-		add_to_requestscache(reqc, r);	
+		add_to_requestscache(reqc, r);
 	}
+	if(reqc->decline == DECLINED)
+		return DECLINED;
 	
 	ap_set_module_config(r->request_config, &vhost_ldap_ng_module, reqc);
 #ifdef HAVEPHP
@@ -672,7 +657,7 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 	alias_t *cursor = (alias_t *)reqc->redirects->elts;
 	if (r->uri[0] != '/' && r->uri[0] != '\0') 
 		return DECLINED;
-	for(i = 0; i < reqc->redirects->nelts; i++){
+	for(i = 0; reqc->redirects && i < reqc->redirects->nelts; i++){
 		alias = (alias_t *) &cursor[i];
 		if(alias_matches(r->uri, alias->src)){
 			apr_table_setn(r->headers_out, "Location", alias->dst);
@@ -692,7 +677,7 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 	
 	/* Checking for aliases */
 	cursor = (alias_t *)reqc->aliases->elts;
-	for(i = 0; i < reqc->aliases->nelts; i++){
+	for(i = 0; reqc->aliases && i < reqc->aliases->nelts; i++){
 		alias = (alias_t *) &cursor[i];
 		if (alias_matches(r->uri, alias->src)) {
 			/* Set exact filename for CGI script */
@@ -795,7 +780,7 @@ static ap_unix_identity_t *mod_vhost_ldap_get_suexec_id_doer(const request_rec *
 	if ((ugid = apr_palloc(r->pool, sizeof(ap_unix_identity_t))) == NULL)
 		return NULL;
 
-	passwdp = getpwnam(req->uid);
+	passwdp = getpwnam(req->uid); //Get UID and GID from aliases in LDAP
 	groupp = getgrnam(req->gid);
 
 	if ((passwdp->pw_uid < MIN_UID)||(groupp->gr_gid < MIN_GID))
