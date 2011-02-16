@@ -59,14 +59,21 @@
 #define MIN_UID 100
 #define MIN_GID 100
 
-#define MAX_FAILURES 5
+#define PHP_INI_USER    (1<<0)
+#define PHP_INI_PERDIR  (1<<1)
+#define PHP_INI_SYSTEM  (1<<2)
+
+#define PHP_INI_STAGE_STARTUP           (1<<0)
+#define PHP_INI_STAGE_SHUTDOWN          (1<<1)
+#define PHP_INI_STAGE_ACTIVATE          (1<<2)
+#define PHP_INI_STAGE_DEACTIVATE        (1<<3)
+#define PHP_INI_STAGE_RUNTIME           (1<<4)
 
 module AP_MODULE_DECLARE_DATA vhost_ldap_ng_module;
 
-static LDAP *ldapconn;
 static apr_pool_t *vhost_ldap_pool = NULL;
 static apr_hash_t *requestscache = NULL;
-
+extern int zend_alter_ini_entry (char *, uint, char *, uint, int, int);
 typedef enum {
 	MVL_UNSET, MVL_DISABLED, MVL_ENABLED
 } mod_vhost_ldap_status_e;
@@ -94,7 +101,7 @@ typedef struct mod_vhost_ldap_config_t {
 
 	char *fallback;                     /* Fallback virtual host */
 	char *rootdir;
-	
+	char *php_includepath;
 } mod_vhost_ldap_config_t;
 
 typedef struct mod_vhost_ldap_request_t {
@@ -185,6 +192,7 @@ mod_vhost_ldap_create_server_config (apr_pool_t *p, server_rec *s)
 	conf->deref = always;
 	conf->fallback = NULL;
 	conf->rootdir = NULL;
+	conf->php_includepath = NULL;
 	return conf;
 }
 
@@ -210,6 +218,7 @@ mod_vhost_ldap_merge_server_config(apr_pool_t *p, void *parentv, void *childv)
 		conf->scope = child->scope;
 		conf->filter = child->filter;
 		conf->secure = child->secure;
+		conf->php_includepath = child->php_includepath;
 	} else {
 		conf->have_ldap_url = parent->have_ldap_url;
 		conf->url = parent->url;
@@ -219,6 +228,7 @@ mod_vhost_ldap_merge_server_config(apr_pool_t *p, void *parentv, void *childv)
 		conf->scope = parent->scope;
 		conf->filter = parent->filter;
 		conf->secure = parent->secure;
+		conf->php_includepath = parent->php_includepath;
 	}
 	if (child->have_deref) {
 		conf->have_deref = child->have_deref;
@@ -365,7 +375,7 @@ static const char *mod_vhost_ldap_set_rootdir(cmd_parms *cmd, void *dummy, const
 		(mod_vhost_ldap_config_t *)ap_get_module_config(cmd->server->module_config, &vhost_ldap_ng_module);
 	len = strlen(rootdir);
 	if(strcmp(rootdir+len-1, "/") != 0)
-		rootdir = strcat((char *)rootdir, "/");
+		rootdir = apr_pstrcat(cmd->pool, rootdir, "/", NULL);
 	conf->rootdir = apr_pstrdup(cmd->pool, rootdir);
 	return NULL;
 }
@@ -417,6 +427,14 @@ static const char *mod_vhost_ldap_set_fallback(cmd_parms *cmd, void *dummy, cons
 	return NULL;
 }
 
+static const char *mod_vhost_ldap_set_phpincludepath(cmd_parms *cmd, void *dummy, const char *path)
+{
+	mod_vhost_ldap_config_t *conf =
+	(mod_vhost_ldap_config_t *)ap_get_module_config(cmd->server->module_config, &vhost_ldap_ng_module);
+	conf->php_includepath = apr_pstrdup(cmd->pool, path);
+	return NULL;
+}
+
 command_rec mod_vhost_ldap_cmds[] = {
 	AP_INIT_TAKE1("VhostLDAPURL", mod_vhost_ldap_parse_url, NULL, RSRC_CONF,
 					"URL to define LDAP connection. This should be an RFC 2255 compliant\n"
@@ -446,7 +464,8 @@ command_rec mod_vhost_ldap_cmds[] = {
 					"Set default virtual host which will be used when requested hostname"
 					"is not found in LDAP database. This option can be used to display"
 					"\"virtual host not found\" type of page."),
-	AP_INIT_TAKE1("VhostLDAProotdir", mod_vhost_ldap_set_rootdir, NULL, RSRC_CONF, "Configurable rootDir for vhosts\n"),
+	AP_INIT_TAKE1("VhostLDAProotdir", mod_vhost_ldap_set_rootdir, NULL, RSRC_CONF, "Configurable rootDir for vhosts"),
+	AP_INIT_TAKE1("phpIncludePath",mod_vhost_ldap_set_phpincludepath, NULL, RSRC_CONF, "php include_path configuration for vhost"),
 	{NULL}
 };
 
@@ -468,11 +487,24 @@ static int attribute_tokenizer(char *instr, ...)
 	return i;
 }
 
-static apr_status_t mod_vhost_ldap_child_exit(void *data)
+static int ldapconnect(LDAP **ldapconn, mod_vhost_ldap_config_t *conf)
 {
-	if (ldapconn)
-		ldap_unbind(ldapconn);
-	return APR_SUCCESS;
+	int ldapversion = LDAP_VERSION3;
+	if(*ldapconn == NULL){
+		*ldapconn = ldap_init(conf->host, conf->port);
+		ldap_set_option(*ldapconn, LDAP_OPT_PROTOCOL_VERSION, &ldapversion);
+		if (ldap_simple_bind_s (*ldapconn, conf->binddn, conf->bindpw) != LDAP_SUCCESS){
+			ldap_unbind(*ldapconn);
+			*ldapconn = NULL;
+		}
+	}
+	return *ldapconn != NULL;
+}
+
+static void ldapdestroy(LDAP **ldapconn)
+{
+	ldap_unbind(*ldapconn);
+	*ldapconn = NULL;
 }
 
 static void mod_vhost_ldap_child_init(apr_pool_t * p, server_rec * s)
@@ -481,7 +513,6 @@ static void mod_vhost_ldap_child_init(apr_pool_t * p, server_rec * s)
 		apr_pool_create(&vhost_ldap_pool, p);
 	if(!requestscache)
 		requestscache = apr_hash_make(vhost_ldap_pool);
-	apr_pool_cleanup_register(p, s, mod_vhost_ldap_child_exit, mod_vhost_ldap_child_exit);
 }
 
 static void* get_from_requestscache(request_rec *r)
@@ -512,13 +543,16 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 	(mod_vhost_ldap_config_t *)ap_get_module_config(r->server->module_config, &vhost_ldap_ng_module);
 	core_server_config *core =
 		(core_server_config *)ap_get_module_config(r->server->module_config, &core_module);
+	LDAP *ld = NULL;
 	char *realfile = NULL;
 	char *myfilter = NULL;
 	alias_t *alias = NULL;
 	int i = 0, ret = 0;
 	LDAPMessage *ldapmsg = NULL, *vhostentry = NULL;
 	// mod_vhost_ldap is disabled or we don't have LDAP Url
-	if ((conf->enabled != MVL_ENABLED)||(!conf->have_ldap_url)||(!r->hostname)) {
+	if ((conf->enabled != MVL_ENABLED)||(!conf->have_ldap_url)||(!r->hostname)){
+		ap_log_rerror(APLOG_MARK, APLOG_ERR|APLOG_NOERRNO, 0, r, 
+				"[mod_vhost_ldap_ng.c] Module disabled");
 		return DECLINED;
 	}
 
@@ -532,31 +566,30 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 		reqc->redirects = (apr_array_header_t *)apr_array_make(vhost_ldap_pool, 5, sizeof(alias_t));
 		//Search ldap
 		//TODO: Create a function
-		if(!ldapconn){
-			int ldap_version = LDAP_VERSION3;
-			ldapconn = ldap_init(conf->host, conf->port);
-			ldap_set_option(ldapconn, LDAP_OPT_PROTOCOL_VERSION, &ldap_version);
-			if (ldap_simple_bind_s (ldapconn, conf->binddn, conf->bindpw) != LDAP_SUCCESS){
-				ldap_unbind(ldapconn);
-				ldapconn = NULL;
-				ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,"[mod_vhost_ldap_ng.c]: ldap connect error");
-				return DECLINED;
-			}
+
+		while(!ldapconnect(&ld, conf) && i<2){
+			i++;	
+		}
+		if(i == 2){
+			ap_log_rerror(APLOG_MARK, APLOG_ERR|APLOG_NOERRNO, 0, r, 
+							"[mod_vhost_ldap_ng.c] Cannot connect to LDAP Server");
+				conf->enabled = MVL_DISABLED;
+				return HTTP_GATEWAY_TIME_OUT;
 		}
 
 		myfilter = apr_psprintf(r->pool,"(&(%s)(|(apacheServerName=%s)(apacheServerAlias=%s)))",
 									conf->filter, r->hostname, r->hostname);
-		ret = ldap_search_s (ldapconn, conf->basedn, conf->scope, myfilter, (char **)attributes, 0, &ldapmsg);
-		if(ret != LDAP_SUCCESS){
+
+		ret = ldap_search_s (ld, conf->basedn, conf->scope, myfilter, (char **)attributes, 0, &ldapmsg);
+		if(ret != LDAP_SUCCESS){//SIGPIPE?
 			return DECLINED;
 		}
-		
-		vhostentry = ldap_first_entry (ldapconn, ldapmsg);
-		reqc->dn = ldap_get_dn(ldapconn, vhostentry);
-		
+		vhostentry = ldap_first_entry (ld, ldapmsg);
+		reqc->dn = ldap_get_dn(ld, vhostentry);
+		i=0;
 		while(attributes[i]){
-			int k =0;
-			char **eValues = ldap_get_values(ldapconn, vhostentry, attributes[i]);
+			int k = 0;
+			char **eValues = ldap_get_values(ld, vhostentry, attributes[i]);
 			if (eValues){
 				k = ldap_count_values (eValues);
 				if (strcasecmp(attributes[i], "apacheServerName") == 0){
@@ -623,22 +656,24 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 		}
 		if(ldapmsg)
 			ldap_msgfree(ldapmsg);
+		ldapdestroy(&ld);
 		add_to_requestscache(reqc, r);	
 	}
-	ap_set_module_config(r->request_config, &vhost_ldap_ng_module, reqc);
-	ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
-		"[mod_vhost_ldap_ng.c]: loaded from ldap: "
-		"apacheServerName: %s, "
-		"apacheServerAdmin: %s, "
-		"apacheDocumentRoot: %s, "
-		"apacheSuexecUid: %s, "
-		"apacheSuexecGid: %s",
-		reqc->name, reqc->admin, reqc->docroot, reqc->uid, reqc->gid);
 	
+	ap_set_module_config(r->request_config, &vhost_ldap_ng_module, reqc);
+#ifdef HAVEPHP
+	char *path = NULL;
+	if(!conf->php_includepath)
+		path = apr_pstrcat(r->pool, reqc->docroot, "/", NULL);
+	else
+		path = apr_pstrcat(r->pool, reqc->docroot, "/:", conf->php_includepath, NULL);
+	zend_alter_ini_entry("open_basedir", strlen("open_basedir") + 1, (void *)path, strlen(path), PHP_INI_SYSTEM, PHP_INI_STAGE_RUNTIME);
+	zend_alter_ini_entry("include_path", strlen("include_path") + 1, (void *)conf->php_includepath, strlen(conf->php_includepath), PHP_INI_SYSTEM, PHP_INI_STAGE_RUNTIME);
+#endif
 	if ((reqc->name == NULL)||(reqc->docroot == NULL)) {
 		ap_log_rerror(APLOG_MARK, APLOG_ERR|APLOG_NOERRNO, 0, r, 
 			"[mod_vhost_ldap_ng.c] translate: "
-			"translate failed; ServerName or DocumentRoot not defined");
+			"translate failed; ServerName %s or DocumentRoot %s not defined", reqc->name, reqc->docroot);
 		return HTTP_INTERNAL_SERVER_ERROR;
 	}
 
@@ -728,14 +763,6 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 		return HTTP_INTERNAL_SERVER_ERROR;
 	}
 	ap_set_module_config(r->server->module_config, &core_module, core);
-
-	/* Stolen from server/core.c */
-
-	if (reqc->docroot == NULL) {
-		ap_log_rerror(APLOG_MARK, APLOG_WARNING, 0, r, 
-			"[mod_vhost_ldap_ng.c] set_document_root: DocumentRoot must be a directory");
-		return HTTP_INTERNAL_SERVER_ERROR;
-	}
 
 	/* TODO: ap_configtestonly && ap_docrootcheck && */
 	if (apr_filepath_merge((char**)&core->ap_document_root, NULL, reqc->docroot,
