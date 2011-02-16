@@ -8,3 +8,6 @@ OpenLDAP you are on your own to build a schema.
 
 You should configure the LDAP server to maintain indices on apacheServerName,
 apacheServerAlias and anything you use in your additional search filter.
+
+Refer to http://www.simonecaruso.com/2011/02/configuring-apache-dynamic-virtualhosts-with-ldap-and-mod_vhost_ldap_ng/ 
+for guided installation
