@@ -7,3 +7,6 @@ It's build on top of mod_ldap, so it uses it's caching capabilities
 
 This module is a fork of mod-vhost-ldap (http://modvhostldap.alioth.debian.org/)
 to implements new functionalities to make it more flexible for ISP environments.
+
+Ardeek note on mod_vhost_ldap_ng:
+mod_ldap dependency is dropped moving to more flexible client library, OpenLDAP.

@@ -165,16 +165,7 @@ static int mod_vhost_ldap_post_config(apr_pool_t *p, apr_pool_t *plog, apr_pool_
 	for (m = ap_preloaded_modules; *m != NULL; m++)
 	  total_modules++;
 
-	/* make sure that mod_ldap (util_ldap) is loaded */
-	if (ap_find_linked_module("util_ldap.c") == NULL) {
-		ap_log_error(APLOG_MARK, APLOG_ERR|APLOG_NOERRNO, 0, s,
-			"Module mod_ldap missing. Mod_ldap (aka. util_ldap) "
-			"must be loaded in order for mod_vhost_ldap_ng to function properly");
-		return HTTP_INTERNAL_SERVER_ERROR;
-    	}
-
 	ap_add_version_component(p, MOD_VHOST_LDAP_VERSION);
-
 	return OK;
 }
 
