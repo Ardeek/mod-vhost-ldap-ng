@@ -521,6 +521,8 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 	//Search in cache
 	reqc = (mod_vhost_ldap_request_t *)get_from_requestscache(r);
 	if(!reqc){
+		ap_log_rerror(APLOG_MARK, APLOG_ERR|APLOG_NOERRNO, 0, r, 
+				"[mod_vhost_ldap_ng.c] Cannot resolve data from cache %x", (int)requestscache);
 		reqc = apr_palloc(vhost_ldap_pool, sizeof(mod_vhost_ldap_request_t));
 		memset(reqc, 0, sizeof(mod_vhost_ldap_request_t));
 	}
