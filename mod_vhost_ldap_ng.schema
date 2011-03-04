@@ -88,6 +88,22 @@ attributetype ( 1.3.6.1.4.1.8387.1.1.12 NAME 'apacheErrorLog'
         EQUALITY caseIgnoreMatch
         SUBSTR caseIgnoreSubstringsMatch
         SYNTAX 1.3.6.1.4.1.1466.115.121.1.15{256} )
+		
+attributetype ( 1.3.6.1.4.1.8387.1.1.13 NAME 'phpOpenBasedir'
+        SUP name
+        DESC 'mod_vhost_ldap_ng: PHP .ini value for open_basedir'
+        EQUALITY caseIgnoreMatch
+        SUBSTR caseIgnoreSubstringsMatch
+        SYNTAX 1.3.6.1.4.1.1466.115.121.1.15{256}
+		SINGLE-VALUE )
+
+attributetype ( 1.3.6.1.4.1.8387.1.1.14 NAME 'phpIncludePath'
+        SUP name
+        DESC 'mod_vhost_ldap_ng: PHP .ini value for include_path'
+        EQUALITY caseIgnoreMatch
+        SUBSTR caseIgnoreSubstringsMatch
+        SYNTAX 1.3.6.1.4.1.1466.115.121.1.15{256}
+		SINGLE-VALUE )
 
 objectclass ( 1.3.6.1.4.1.8387.1.2.1 NAME 'apacheConfig'
 	SUP 'top'

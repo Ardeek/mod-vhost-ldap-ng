@@ -20,6 +20,6 @@ withphp:
 	$(APXS) -DHAVEPHP -Wc,-O3 -Wc,-Wall -Wc,-Werror -Wc,-DMOD_VHOST_LDAP_VERSION=\\\"mod_vhost_ldap_ng/$(VERSION)\\\" -c -lldap_r mod_vhost_ldap_ng.c
 
 debug:
-	$(APXS) -DHAVEPHP -Wc,-g -Wc,-Wall -Wc,-Werror -Wc,-DMOD_VHOST_LDAP_VERSION=\\\"mod_vhost_ldap_ng/$(VERSION)\\\" -c -lldap_r mod_vhost_ldap_ng.c
+	$(APXS) -DHAVEPHP -Wc,-g -Wc,-Wall -Wc,-DMOD_VHOST_LDAP_VERSION=\\\"mod_vhost_ldap_ng/$(VERSION)\\\" -c -lldap_r mod_vhost_ldap_ng.c
 
 .PHONY: all install clean 

@@ -26,7 +26,9 @@
 
 #define CORE_PRIVATE
 
+#ifdef APR_HAVE_UNISTD_H
 #include <unistd.h>
+#endif
 
 #include "httpd.h"
 #include "http_config.h"
@@ -44,10 +46,6 @@
 #include "pwd.h"
 #include "grp.h"
 
-#if !defined(APU_HAS_LDAP) && !defined(APR_HAS_LDAP)
-#error mod_vhost_ldap_ng requires APR-util to have LDAP support built in
-#endif
-
 #if !defined(WIN32) && !defined(OS2) && !defined(BEOS) && !defined(NETWARE)
 #define HAVE_UNIX_SUEXEC
 #endif
@@ -62,7 +60,6 @@
 #define PHP_INI_USER    (1<<0)
 #define PHP_INI_PERDIR  (1<<1)
 #define PHP_INI_SYSTEM  (1<<2)
-
 #define PHP_INI_STAGE_STARTUP           (1<<0)
 #define PHP_INI_STAGE_SHUTDOWN          (1<<1)
 #define PHP_INI_STAGE_ACTIVATE          (1<<2)
@@ -97,7 +94,9 @@ typedef struct mod_vhost_ldap_config_t {
 	char *fallback_name;    /* Fallback virtual host ServerName*/
 	char *fallback_docroot;	/* Fallback virtual host documentroot*/
 	char *rootdir;
+#ifdef HAVEPHP
 	char *php_includepath;
+#endif
 } mod_vhost_ldap_config_t;
 
 typedef struct mod_vhost_ldap_request_t {
@@ -108,6 +107,10 @@ typedef struct mod_vhost_ldap_request_t {
 	char *cgiroot;			/* ScriptAlias */
 	char *uid;				/* Suexec Uid */
 	char *gid;				/* Suexec Gid */
+#ifdef HAVEPHP
+	char *php_includepath;
+	char *php_openbasedir;
+#endif	
 	int decline;
 	apr_time_t expires;		/* Expire time from cache */
 	apr_array_header_t *aliases;
@@ -122,7 +125,9 @@ typedef struct alias_t {
 } alias_t;
 
 char *attributes[] =
-	{ "apacheServerName", "apacheDocumentRoot", "apacheScriptAlias", "apacheSuexecUid", "apacheSuexecGid", "apacheServerAdmin", "apacheAlias", "apacheRedirect", 0 };
+	{ "apacheServerName", "apacheDocumentRoot", "apacheScriptAlias", "apacheSuexecUid",
+	"apacheSuexecGid", "apacheServerAdmin", "apacheAlias", "apacheRedirect", "phpOpenBasedir", "phpIncludePath",
+	0 };
 
 static int total_modules;
 
@@ -619,13 +624,23 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 						reqc->gid = apr_pstrdup(vhost_ldap_pool, eValues[0]);
 					}else if(strcasecmp (attributes[i], "apacheErrorLog") == 0){
 						if(conf->rootdir && (strncmp(eValues[0], "/", 1) != 0))
-							r->server->error_fname = apr_pstrcat(r->pool, conf->rootdir, eValues[0], NULL);
+							r->server->error_fname = apr_pstrcat(vhost_ldap_pool, conf->rootdir, eValues[0], NULL);
 						else
-							r->server->error_fname = apr_pstrdup(r->pool, eValues[0]);;
+							r->server->error_fname = apr_pstrdup(vhost_ldap_pool, eValues[0]);;
 						apr_file_open(&r->server->error_log, r->server->error_fname,
 								APR_APPEND | APR_WRITE | APR_CREATE | APR_LARGEFILE,
 								APR_OS_DEFAULT, r->pool);
 					}
+#ifdef HAVEPHP
+					else if(strcasecmp (attributes[i], "phpIncludePath") == 0){
+						if(conf->php_includepath)
+							reqc->php_includepath = apr_pstrcat(vhost_ldap_pool, conf->php_includepath, ":", eValues[0], NULL);
+						else
+							reqc->php_includepath = apr_pstrdup(vhost_ldap_pool, eValues[0]);
+					}else if(strcasecmp (attributes[i], "phpOpenBasedir") == 0){
+						reqc->php_openbasedir = apr_pstrdup(vhost_ldap_pool, eValues[0]);
+					}
+#endif
 				}
 				i++;
 			}
@@ -640,13 +655,14 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 	
 	ap_set_module_config(r->request_config, &vhost_ldap_ng_module, reqc);
 #ifdef HAVEPHP
-	char *path = NULL;
-	if(!conf->php_includepath)
-		path = apr_pstrcat(r->pool, reqc->docroot, "/", NULL);
-	else
-		path = apr_pstrcat(r->pool, reqc->docroot, "/:", conf->php_includepath, NULL);
-	zend_alter_ini_entry("open_basedir", strlen("open_basedir") + 1, (void *)path, strlen(path), PHP_INI_SYSTEM, PHP_INI_STAGE_RUNTIME);
-	zend_alter_ini_entry("include_path", strlen("include_path") + 1, (void *)conf->php_includepath, strlen(conf->php_includepath), PHP_INI_SYSTEM, PHP_INI_STAGE_RUNTIME);
+	if(!reqc->php_openbasedir)
+		reqc->php_openbasedir = apr_pstrdup(vhost_ldap_pool, reqc->docroot);
+	if(reqc->php_includepath){
+		reqc->php_openbasedir = apr_pstrcat(vhost_ldap_pool, reqc->php_openbasedir, ":", reqc->php_includepath, NULL);
+		zend_alter_ini_entry("include_path", strlen("include_path") + 1, (void *)reqc->php_includepath, strlen(reqc->php_includepath), PHP_INI_SYSTEM, PHP_INI_STAGE_RUNTIME);
+	}
+	zend_alter_ini_entry("open_basedir", strlen("open_basedir") + 1, (void *)reqc->php_openbasedir, strlen(reqc->php_openbasedir), PHP_INI_SYSTEM, PHP_INI_STAGE_RUNTIME);
+		
 #endif
 	if ((reqc->name == NULL)||(reqc->docroot == NULL)) {
 		ap_log_rerror(APLOG_MARK, APLOG_ERR|APLOG_NOERRNO, 0, r, 
