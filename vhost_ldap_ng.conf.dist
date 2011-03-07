@@ -4,4 +4,5 @@
         VhostLdapBindDN "cn=admin,dc=example,dc=com"
         VhostLDAPBindPassword "secret"
         VhostLDapRootDir "/var/www"
+	phpIncludePath "/usr/share/php/"
 </IfModule>
