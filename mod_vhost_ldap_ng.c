@@ -36,22 +36,20 @@
 #include "http_log.h"
 #include "http_request.h"
 #include "apr_version.h"
-#include "apr_ldap.h"
 #include "apr_reslist.h"
 #include "apr_strings.h"
 #include "apr_tables.h"
 #include "util_ldap.h"
-#include "util_script.h"
-#include "sys/types.h"
-#include "pwd.h"
-#include "grp.h"
+
 
 #if !defined(WIN32) && !defined(OS2) && !defined(BEOS) && !defined(NETWARE)
-#define HAVE_UNIX_SUEXEC
+	#define HAVE_UNIX_SUEXEC
 #endif
 
 #ifdef HAVE_UNIX_SUEXEC
 #include "unixd.h"              /* Contains the suexec_identity hook used on Unix */
+#include "pwd.h"
+#include "grp.h"
 #endif
 
 #define MIN_UID 100
@@ -185,7 +183,7 @@ mod_vhost_ldap_create_server_config (apr_pool_t *p, server_rec *s)
 	conf->fallback_docroot = NULL;
 	conf->rootdir = NULL;
 #ifdef HAVEPHP
-	conf->php_includepath = NULL;
+	conf->php_includepath =".:/usr/share/php";
 #endif
 	return conf;
 }
@@ -488,7 +486,7 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 	reqc = (mod_vhost_ldap_request_t *)get_from_requestscache(r);
 	if(!reqc){
 		ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r, 
-				"[mod_vhost_ldap_ng.c] Cannot resolve data from cache %x", (int)requestscache);
+				"[mod_vhost_ldap_ng.c] Cannot resolve data from cache");
 		reqc = apr_palloc(vhost_ldap_pool, sizeof(mod_vhost_ldap_request_t));
 		memset(reqc, 0, sizeof(mod_vhost_ldap_request_t));
 	}
