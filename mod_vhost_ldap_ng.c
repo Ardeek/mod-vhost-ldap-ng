@@ -184,50 +184,9 @@ mod_vhost_ldap_create_server_config (apr_pool_t *p, server_rec *s)
 	conf->fallback_name = NULL;
 	conf->fallback_docroot = NULL;
 	conf->rootdir = NULL;
+#ifdef HAVEPHP
 	conf->php_includepath = NULL;
-	return conf;
-}
-
-static void *
-mod_vhost_ldap_merge_server_config(apr_pool_t *p, void *parentv, void *childv)
-{
-	mod_vhost_ldap_config_t *parent = (mod_vhost_ldap_config_t *) parentv;
-	mod_vhost_ldap_config_t *child  = (mod_vhost_ldap_config_t *) childv;
-	mod_vhost_ldap_config_t *conf =
-	(mod_vhost_ldap_config_t *)apr_pcalloc(p, sizeof(mod_vhost_ldap_config_t));
-
-	if (child->enabled == MVL_UNSET)
-		conf->enabled = parent->enabled;
-	else
-		conf->enabled = child->enabled;
-
-	if (child->have_ldap_url) {
-		conf->have_ldap_url = child->have_ldap_url;
-		conf->url = child->url;
-		conf->host = child->host;
-		conf->port = child->port;
-		conf->basedn = child->basedn;
-		conf->scope = child->scope;
-		conf->filter = child->filter;
-		conf->secure = child->secure;
-		conf->php_includepath = child->php_includepath;
-	} else {
-		conf->have_ldap_url = parent->have_ldap_url;
-		conf->url = parent->url;
-		conf->host = parent->host;
-		conf->port = parent->port;
-		conf->basedn = parent->basedn;
-		conf->scope = parent->scope;
-		conf->filter = parent->filter;
-		conf->secure = parent->secure;
-		conf->php_includepath = parent->php_includepath;
-	}
-	conf->binddn = (child->binddn ? child->binddn : parent->binddn);
-	conf->bindpw = (child->bindpw ? child->bindpw : parent->bindpw);
-	conf->fallback_name = (child->fallback_name ? child->fallback_name : parent->fallback_name);
-	conf->fallback_docroot = (child->fallback_docroot ? child->fallback_docroot : parent->fallback_docroot);
-	conf->rootdir = child->rootdir ? child->rootdir : parent->rootdir;
-	
+#endif
 	return conf;
 }
 
@@ -394,7 +353,7 @@ static const char *mod_vhost_ldap_set_fallback_docroot(cmd_parms *cmd, void *dum
 	conf->fallback_docroot = apr_pstrdup(cmd->pool, fallback);
 	return NULL;
 }
-
+#ifdef HAVEPHP
 static const char *mod_vhost_ldap_set_phpincludepath(cmd_parms *cmd, void *dummy, const char *path)
 {
 	mod_vhost_ldap_config_t *conf =
@@ -402,7 +361,7 @@ static const char *mod_vhost_ldap_set_phpincludepath(cmd_parms *cmd, void *dummy
 	conf->php_includepath = apr_pstrdup(cmd->pool, path);
 	return NULL;
 }
-
+#endif
 command_rec mod_vhost_ldap_cmds[] = {
 	AP_INIT_TAKE1("VhostLDAPURL", mod_vhost_ldap_parse_url, NULL, RSRC_CONF,
 					"URL to define LDAP connection. This should be an RFC 2255 compliant\n"
@@ -432,7 +391,9 @@ command_rec mod_vhost_ldap_cmds[] = {
 					"is not found in LDAP database. This option can be used to display"
 					"\"virtual host not found\" type of page."),
 	AP_INIT_TAKE1("VhostLDAProotdir", mod_vhost_ldap_set_rootdir, NULL, RSRC_CONF, "Configurable rootDir for vhosts"),
+#ifdef HAVEPHP
 	AP_INIT_TAKE1("phpIncludePath",mod_vhost_ldap_set_phpincludepath, NULL, RSRC_CONF, "php include_path configuration for vhost"),
+#endif
 	{NULL}
 };
 
@@ -526,7 +487,7 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 	//Search in cache
 	reqc = (mod_vhost_ldap_request_t *)get_from_requestscache(r);
 	if(!reqc){
-		ap_log_rerror(APLOG_MARK, APLOG_ERR|APLOG_NOERRNO, 0, r, 
+		ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r, 
 				"[mod_vhost_ldap_ng.c] Cannot resolve data from cache %x", (int)requestscache);
 		reqc = apr_palloc(vhost_ldap_pool, sizeof(mod_vhost_ldap_request_t));
 		memset(reqc, 0, sizeof(mod_vhost_ldap_request_t));
@@ -735,41 +696,16 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 		return HTTP_INTERNAL_SERVER_ERROR;
 	}
 
-	r->server->server_hostname = reqc->name;
+	r->server->server_hostname = apr_pstrdup(r->pool,reqc->name);
 
-	if (reqc->admin) {
-		r->server->server_admin = reqc->admin;
-	}
+	if (reqc->admin)
+		r->server->server_admin = apr_pstrdup(r->pool, reqc->admin);
 
-	if ((r->server->module_config = apr_pmemdup(r->pool, r->server->module_config,
-			sizeof(void *) *
-			(total_modules + DYNAMIC_MODULE_LIMIT))) == NULL) {
-		ap_log_rerror(APLOG_MARK, APLOG_ERR|APLOG_NOERRNO, 0, r, 
-			"[mod_vhost_ldap_ng.c] translate: "
-			"translate failed; Unable to copy r->server->module_config structure");
-		return HTTP_INTERNAL_SERVER_ERROR;
-	}
-
-	if ((core = apr_pmemdup(r->pool, core, sizeof(*core))) == NULL) {
-		ap_log_rerror(APLOG_MARK, APLOG_ERR|APLOG_NOERRNO, 0, r, 
-			"[mod_vhost_ldap_ng.c] translate: "
-			"translate failed; Unable to copy r->core structure");
-		return HTTP_INTERNAL_SERVER_ERROR;
-	}
-	ap_set_module_config(r->server->module_config, &core_module, core);
-
-	/* TODO: ap_configtestonly && ap_docrootcheck && */
-	if (apr_filepath_merge((char**)&core->ap_document_root, NULL, reqc->docroot,
-			APR_FILEPATH_TRUENAME, r->pool) != APR_SUCCESS
-			|| !ap_is_directory(r->pool, reqc->docroot)) {
-
-		ap_log_rerror(APLOG_MARK, APLOG_WARNING, 0, r,
-			"[mod_vhost_ldap_ng.c] set_document_root: Warning: DocumentRoot [%s] does not exist",
-			reqc->docroot);
-		core->ap_document_root = reqc->docroot;
-		if(r->handler && (strcmp(r->handler, "Script") == 0))
-			return OK;
-	}
+	core->ap_document_root = apr_pstrdup(r->pool, reqc->docroot);
+	if (!ap_is_directory(r->pool, reqc->docroot))
+		ap_log_rerror(APLOG_MARK, APLOG_ERROR, 0, r,
+			"[mod_vhost_ldap.c] set_document_root: Warning: DocumentRoot [%s] does not exist", core->ap_document_root);
+	//ap_set_module_config(r->server->module_config, &core_module, core);
 
 	/* Hack to allow post-processing by other modules (mod_rewrite, mod_alias) */
 	return DECLINED;
@@ -822,6 +758,7 @@ mod_vhost_ldap_register_hooks (apr_pool_t * p)
 	ap_hook_child_init(mod_vhost_ldap_child_init, NULL, NULL, APR_HOOK_MIDDLE);
 	ap_hook_post_config(mod_vhost_ldap_post_config, NULL, NULL, APR_HOOK_MIDDLE);
 	ap_hook_translate_name(mod_vhost_ldap_translate_name, NULL, aszRewrite, APR_HOOK_FIRST);
+	
 #ifdef HAVE_UNIX_SUEXEC
 	ap_hook_get_suexec_identity(mod_vhost_ldap_get_suexec_id_doer, NULL, NULL, APR_HOOK_MIDDLE);
 #endif
@@ -833,7 +770,7 @@ module AP_MODULE_DECLARE_DATA vhost_ldap_ng_module = {
 	NULL,
 	NULL,
 	mod_vhost_ldap_create_server_config,
-	mod_vhost_ldap_merge_server_config,
+	NULL,
 	mod_vhost_ldap_cmds,
 	mod_vhost_ldap_register_hooks,
 };
