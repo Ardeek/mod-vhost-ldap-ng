@@ -122,9 +122,11 @@ typedef struct alias_t {
 	int iscgi;
 } alias_t;
 
-char *attributes[] =
-	{ "apacheServerName", "apacheDocumentRoot", "apacheScriptAlias", "apacheSuexecUid",
-	"apacheSuexecGid", "apacheServerAdmin", "apacheAlias", "apacheRedirect", "phpOpenBasedir", "phpIncludePath",
+char *attributes[] = {
+		"apacheServerName", "apacheDocumentRoot", "apacheScriptAlias", "apacheSuexecUid", "apacheSuexecGid", "apacheServerAdmin", "apacheAlias", "apacheRedirect",
+#ifdef HAVEPHP
+		"phpOpenBasedir", "phpIncludePath",
+#endif
 	0 };
 
 static int total_modules;
@@ -183,7 +185,7 @@ mod_vhost_ldap_create_server_config (apr_pool_t *p, server_rec *s)
 	conf->fallback_docroot = NULL;
 	conf->rootdir = NULL;
 #ifdef HAVEPHP
-	conf->php_includepath =".:/usr/share/php";
+	conf->php_includepath = ".:/usr/share/php";
 #endif
 	return conf;
 }
@@ -614,14 +616,17 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 	
 	ap_set_module_config(r->request_config, &vhost_ldap_ng_module, reqc);
 #ifdef HAVEPHP
+	char *openbasedir, *include;
+	if(!reqc->php_includepath)
+		include = apr_pstrcat(r->pool, conf->php_includepath, ":", reqc->docroot, NULL);
+	else
+		include = apr_pstrcat(r->pool, reqc->php_includepath, ":", conf->php_includepath, ":", reqc->docroot, NULL);
 	if(!reqc->php_openbasedir)
-		reqc->php_openbasedir = apr_pstrdup(vhost_ldap_pool, reqc->docroot);
-	if(reqc->php_includepath){
-		reqc->php_openbasedir = apr_pstrcat(vhost_ldap_pool, reqc->php_openbasedir, ":", reqc->php_includepath, NULL);
-		zend_alter_ini_entry("include_path", strlen("include_path") + 1, (void *)reqc->php_includepath, strlen(reqc->php_includepath), PHP_INI_SYSTEM, PHP_INI_STAGE_RUNTIME);
-	}
-	zend_alter_ini_entry("open_basedir", strlen("open_basedir") + 1, (void *)reqc->php_openbasedir, strlen(reqc->php_openbasedir), PHP_INI_SYSTEM, PHP_INI_STAGE_RUNTIME);
-		
+		openbasedir = apr_pstrdup(r->pool, include);
+	else
+		openbasedir = apr_pstrcat(r->pool, reqc->php_openbasedir, ":", include, NULL);
+	zend_alter_ini_entry("include_path", strlen("include_path") + 1, (void *)include, strlen(include), PHP_INI_SYSTEM, PHP_INI_STAGE_RUNTIME);
+	zend_alter_ini_entry("open_basedir", strlen("open_basedir") + 1, (void *)openbasedir, strlen(openbasedir), PHP_INI_SYSTEM, PHP_INI_STAGE_RUNTIME);
 #endif
 	if ((reqc->name == NULL)||(reqc->docroot == NULL)) {
 		ap_log_rerror(APLOG_MARK, APLOG_ERR|APLOG_NOERRNO, 0, r, 
