@@ -1,8 +1,11 @@
-<IfModule mod_vhost_ldap_ng.c>
+<ifmodule mod_vhost_ldap_ng.c>
         VhostLDAPEnabled on
-        VhostLDAPUrl  "ldap://127.0.0.1/ou=domains,dc=example,dc=com??one?apacheVhostenabled=yes"
-        VhostLdapBindDN "cn=admin,dc=example,dc=com"
+        VhostLDAPUrl  "ldap://127.0.0.1:389"
+        VhostLDAPBaseDN "ou=domains,dc=ardeek,dc=com"
+        VhostLDAPSearchScope "one" #one, sub, children
+        VhostLDAPFilter "apacheVhostEnabled=yes" #Filter to append 
+        VhostLdapBindDN "cn=admin,dc=ardeek,dc=com"
         VhostLDAPBindPassword "secret"
-        VhostLDapRootDir "/var/www"
-	phpIncludePath "/usr/share/php/"
+        VhostLDapRootDir "/var/www/"
+#IF HAVEPHP       phpIncludePath "/usr/share/php/"
 </IfModule>

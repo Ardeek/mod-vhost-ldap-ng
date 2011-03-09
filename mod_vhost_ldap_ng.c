@@ -75,20 +75,13 @@ typedef enum {
 
 typedef struct mod_vhost_ldap_config_t {
 	mod_vhost_ldap_status_e enabled;			/* Is vhost_ldap enabled? */
-
 	/* These parameters are all derived from the VhostLDAPURL directive */
 	char *url;				/* String representation of LDAP URL */
-
-	char *host;				/* Name of the LDAP server (or space separated list) */
-	int port;				/* Port of the LDAP server */
 	char *basedn;			/* Base DN to do all searches from */
 	int scope;				/* Scope of the search */
 	char *filter;			/* Filter to further limit the search  */
-	
 	char *binddn;			/* DN to bind to server (can be NULL) */
 	char *bindpw;			/* Password to bind to server (can be NULL) */
-	int have_ldap_url;			/* Set if we have found an LDAP url */
-	int secure;				/* True if SSL connections are requested */
 	char *fallback_name;    /* Fallback virtual host ServerName*/
 	char *fallback_docroot;	/* Fallback virtual host documentroot*/
 	char *rootdir;
@@ -190,6 +183,43 @@ mod_vhost_ldap_create_server_config (apr_pool_t *p, server_rec *s)
 	return conf;
 }
 
+static const char *mod_vhost_ldap_set_basedn(cmd_parms *cmd, 
+						void *dummy,
+						const char *param)
+{
+	mod_vhost_ldap_config_t *conf =
+		(mod_vhost_ldap_config_t *)ap_get_module_config(cmd->server->module_config, &vhost_ldap_ng_module);
+	conf->basedn = apr_pstrdup(cmd->pool, param);
+	return NULL;
+}
+
+static const char *mod_vhost_ldap_set_searchscope(cmd_parms *cmd, 
+						void *dummy,
+						const char *param)
+{
+	mod_vhost_ldap_config_t *conf =
+		(mod_vhost_ldap_config_t *)ap_get_module_config(cmd->server->module_config, &vhost_ldap_ng_module);
+	if(strcmp(param, "one") == 0)
+		conf->scope = LDAP_SCOPE_ONELEVEL;
+	else if(strcmp(param, "sub") == 0)
+		conf->scope = LDAP_SCOPE_SUBTREE;
+	else if(strcmp(param, "children") == 0)	
+		conf->scope = LDAP_SCOPE_CHILDREN;
+	else
+		conf->scope = LDAP_SCOPE_SUBTREE;
+	return NULL;
+}
+
+static const char *mod_vhost_ldap_set_filter(cmd_parms *cmd, 
+						void *dummy,
+						const char *param)
+{
+	mod_vhost_ldap_config_t *conf =
+		ap_get_module_config(cmd->server->module_config, &vhost_ldap_ng_module);
+	conf->filter = apr_pstrdup(cmd->pool, param);
+	return NULL;
+}
+
 /* 
  * Use the ldap url parsing routines to break up the ldap url into
  * host and port.
@@ -198,107 +228,11 @@ static const char *mod_vhost_ldap_parse_url(cmd_parms *cmd,
 						void *dummy,
 						const char *url)
 {
-	int result;
-	apr_ldap_url_desc_t *urld;
-#if (APR_MAJOR_VERSION >= 1)
-	apr_ldap_err_t *result_err;
-#endif
-
+	
 	mod_vhost_ldap_config_t *conf =
-	(mod_vhost_ldap_config_t *)ap_get_module_config(cmd->server->module_config, &vhost_ldap_ng_module);
-
-	ap_log_error(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0,
-		cmd->server, "[mod_vhost_ldap_ng.c] url parse: `%s'", url);
-    
-#if (APR_MAJOR_VERSION >= 1)    /* for apache >= 2.2 */
-	result = apr_ldap_url_parse(cmd->pool, url, &(urld), &(result_err));
-	if (result != LDAP_SUCCESS) {
-		return result_err->reason;
-	}
-#else
-	result = apr_ldap_url_parse(url, &(urld));
-	if (result != LDAP_SUCCESS) {
-		switch (result) {
-			case LDAP_URL_ERR_NOTLDAP:
-				return "LDAP URL does not begin with ldap://";
-			case LDAP_URL_ERR_NODN:
-				return "LDAP URL does not have a DN";
-			case LDAP_URL_ERR_BADSCOPE:
-				return "LDAP URL has an invalid scope";
-			case LDAP_URL_ERR_MEM:
-				return "Out of memory parsing LDAP URL";
-			default:
-				return "Could not parse LDAP URL";
-		}
-	}
-#endif
+		(mod_vhost_ldap_config_t *)ap_get_module_config(cmd->server->module_config, &vhost_ldap_ng_module);
 	conf->url = apr_pstrdup(cmd->pool, url);
-
-	ap_log_error(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0,
-		cmd->server, "[mod_vhost_ldap_ng.c] url parse: Host: %s", urld->lud_host);
-	ap_log_error(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0,
-		cmd->server, "[mod_vhost_ldap_ng.c] url parse: Port: %d", urld->lud_port);
-	ap_log_error(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0,
-		cmd->server, "[mod_vhost_ldap_ng.c] url parse: DN: %s", urld->lud_dn);
-	ap_log_error(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0,
-		cmd->server, "[mod_vhost_ldap_ng.c] url parse: attrib: %s", urld->lud_attrs? urld->lud_attrs[0] : "(null)");
-	ap_log_error(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0,
-		cmd->server, "[mod_vhost_ldap_ng.c] url parse: scope: %s", 
-	(urld->lud_scope == LDAP_SCOPE_SUBTREE? "subtree" : 
-			urld->lud_scope == LDAP_SCOPE_BASE? "base" : 
-			urld->lud_scope == LDAP_SCOPE_ONELEVEL? "onelevel" : "unknown"));
-			ap_log_error(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0,
-	cmd->server, "[mod_vhost_ldap_ng.c] url parse: filter: %s", urld->lud_filter);
-
-    /* Set all the values, or at least some sane defaults */
-	if (conf->host) {
-		char *p = apr_palloc(cmd->pool, strlen(conf->host) + strlen(urld->lud_host) + 2);
-		strcpy(p, urld->lud_host);
-		strcat(p, " ");
-		strcat(p, conf->host);
-		conf->host = p;
-	} else {
-		conf->host = urld->lud_host? apr_pstrdup(cmd->pool, urld->lud_host) : "localhost";
-	}
-	conf->basedn = urld->lud_dn? apr_pstrdup(cmd->pool, urld->lud_dn) : "";
-
-	conf->scope = urld->lud_scope == LDAP_SCOPE_ONELEVEL ?
-		LDAP_SCOPE_ONELEVEL : LDAP_SCOPE_SUBTREE;
-
-	if (urld->lud_filter) {
-		if (urld->lud_filter[0] == '(') {
-			/* 
-			* Get rid of the surrounding parens; later on when generating the
-			* filter, they'll be put back.
-			*/
-			conf->filter = apr_pstrdup(cmd->pool, urld->lud_filter+1);
-			conf->filter[strlen(conf->filter)-1] = '\0';
-		} else {
-			conf->filter = apr_pstrdup(cmd->pool, urld->lud_filter);
-		}
-	} else {
-		conf->filter = "objectClass=apacheConfig";
-	}
-
-	/* 
-	"ldaps" indicates secure ldap connections desired
-	*/
-	if (strncasecmp(url, "ldaps", 5) == 0) {
-		conf->secure = 1;
-		conf->port = urld->lud_port? urld->lud_port : LDAPS_PORT;
-		ap_log_error(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, cmd->server,
-			"LDAP: vhost_ldap using SSL connections");
-	} else {
-		conf->secure = 0;
-		conf->port = urld->lud_port? urld->lud_port : LDAP_PORT;
-		ap_log_error(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, cmd->server, 
-			"LDAP: vhost_ldap not using SSL connections");
-	}
-
-	conf->have_ldap_url = 1;
-#if (APR_MAJOR_VERSION < 1) /* free only required for older apr */
-	apr_ldap_free_urldesc(urld);
-#endif
+	
 	return NULL;
 }
 
@@ -363,7 +297,7 @@ static const char *mod_vhost_ldap_set_phpincludepath(cmd_parms *cmd, void *dummy
 }
 #endif
 command_rec mod_vhost_ldap_cmds[] = {
-	AP_INIT_TAKE1("VhostLDAPURL", mod_vhost_ldap_parse_url, NULL, RSRC_CONF,
+AP_INIT_TAKE1("VhostLDAPURL", mod_vhost_ldap_parse_url, NULL, RSRC_CONF,
 					"URL to define LDAP connection. This should be an RFC 2255 compliant\n"
 					"URL of the form ldap://host[:port]/basedn[?attrib[?scope[?filter]]].\n"
 					"<ul>\n"
@@ -373,6 +307,12 @@ command_rec mod_vhost_ldap_cmds[] = {
 					"<li>basedn specifies the base DN to start searches from\n"
 					"</ul>\n"),
 
+	AP_INIT_TAKE1 ("VhostLDAPBaseDN", mod_vhost_ldap_set_basedn, NULL, RSRC_CONF,	"LDAP Hostname."),
+	AP_INIT_TAKE1 ("VhostLDAPSearchScope", mod_vhost_ldap_set_searchscope, NULL, RSRC_CONF,
+					"LDAP Hostname."),
+	AP_INIT_TAKE1 ("VhostLDAPFilter", mod_vhost_ldap_set_filter, NULL, RSRC_CONF,
+					"LDAP Hostname."),
+				
 	AP_INIT_TAKE1 ("VhostLDAPBindDN", mod_vhost_ldap_set_binddn, NULL, RSRC_CONF,
 					"DN to use to bind to LDAP server. If not provided, will do an anonymous bind."),
 
@@ -418,15 +358,23 @@ static int attribute_tokenizer(char *instr, ...)
 static int ldapconnect(LDAP **ldapconn, mod_vhost_ldap_config_t *conf)
 {
 	int ldapversion = LDAP_VERSION3;
+	int ret;
 	if(*ldapconn == NULL){
-		*ldapconn = ldap_init(conf->host, conf->port);
-		ldap_set_option(*ldapconn, LDAP_OPT_PROTOCOL_VERSION, &ldapversion);
-		if (ldap_simple_bind_s (*ldapconn, conf->binddn, conf->bindpw) != LDAP_SUCCESS){
+		if((ret = ldap_initialize(ldapconn, conf->url)) > 0){
+			*ldapconn = NULL;
+			return ret;
+		}
+		if((ret = ldap_set_option(*ldapconn, LDAP_OPT_PROTOCOL_VERSION, &ldapversion)) > 0){
+			*ldapconn = NULL;
+			return ret;
+		}
+		if ((ret = ldap_simple_bind_s(*ldapconn, conf->binddn, conf->bindpw)) != LDAP_SUCCESS){
 			ldap_unbind(*ldapconn);
 			*ldapconn = NULL;
+			return ret;
 		}
 	}
-	return *ldapconn != NULL;
+	return 0;
 }
 
 static void ldapdestroy(LDAP **ldapconn)
@@ -478,7 +426,7 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 	int i = 0, ret = 0;
 	LDAPMessage *ldapmsg = NULL, *vhostentry = NULL;
 	// mod_vhost_ldap is disabled or we don't have LDAP Url
-	if ((conf->enabled != MVL_ENABLED)||(!conf->have_ldap_url)||(!r->hostname)){
+	if ((conf->enabled != MVL_ENABLED)||(!conf->url)||(!r->hostname)){
 		ap_log_rerror(APLOG_MARK, APLOG_ERR|APLOG_NOERRNO, 0, r, 
 				"[mod_vhost_ldap_ng.c] Module disabled");
 		return DECLINED;
@@ -495,12 +443,12 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 	if (reqc->expires < apr_time_now()){
 		//Search ldap
 		//TODO: Create a function
-		while(!ldapconnect(&ld, conf) && i<2){
-			i++;	
+		while((ret = ldapconnect(&ld, conf)) != 0 && i<2){
+			i++;
+			ap_log_rerror(APLOG_MARK, APLOG_ERR|APLOG_NOERRNO, 0, r, 
+				"[mod_vhost_ldap_ng.c] ldapconnect: %s", ldap_err2string(ret));
 		}
 		if(i == 2){
-			ap_log_rerror(APLOG_MARK, APLOG_ERR|APLOG_NOERRNO, 0, r, 
-							"[mod_vhost_ldap_ng.c] Cannot connect to LDAP Server");
 			conf->enabled = MVL_DISABLED;
 			return HTTP_GATEWAY_TIME_OUT;
 		}
