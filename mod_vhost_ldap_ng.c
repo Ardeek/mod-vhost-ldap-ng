@@ -171,7 +171,6 @@ mod_vhost_ldap_create_server_config (apr_pool_t *p, server_rec *s)
 	(mod_vhost_ldap_config_t *)apr_pcalloc(p, sizeof (mod_vhost_ldap_config_t));
 
 	conf->enabled = MVL_UNSET;
-	conf->have_ldap_url = 0;
 	conf->binddn = NULL;
 	conf->bindpw = NULL;
 	conf->fallback_name = NULL;
@@ -220,10 +219,6 @@ static const char *mod_vhost_ldap_set_filter(cmd_parms *cmd,
 	return NULL;
 }
 
-/* 
- * Use the ldap url parsing routines to break up the ldap url into
- * host and port.
- */
 static const char *mod_vhost_ldap_parse_url(cmd_parms *cmd, 
 						void *dummy,
 						const char *url)
@@ -297,16 +292,8 @@ static const char *mod_vhost_ldap_set_phpincludepath(cmd_parms *cmd, void *dummy
 }
 #endif
 command_rec mod_vhost_ldap_cmds[] = {
-AP_INIT_TAKE1("VhostLDAPURL", mod_vhost_ldap_parse_url, NULL, RSRC_CONF,
-					"URL to define LDAP connection. This should be an RFC 2255 compliant\n"
-					"URL of the form ldap://host[:port]/basedn[?attrib[?scope[?filter]]].\n"
-					"<ul>\n"
-					"<li>Host is the name of the LDAP server. Use a space separated list of hosts \n"
-					"to specify redundant servers.\n"
-					"<li>Port is optional, and specifies the port to connect to.\n"
-					"<li>basedn specifies the base DN to start searches from\n"
-					"</ul>\n"),
-
+	AP_INIT_TAKE1("VhostLDAPURL", mod_vhost_ldap_parse_url, NULL, RSRC_CONF,
+					"URL to define LDAP connection.\n"),
 	AP_INIT_TAKE1 ("VhostLDAPBaseDN", mod_vhost_ldap_set_basedn, NULL, RSRC_CONF,	"LDAP Hostname."),
 	AP_INIT_TAKE1 ("VhostLDAPSearchScope", mod_vhost_ldap_set_searchscope, NULL, RSRC_CONF,
 					"LDAP Hostname."),
@@ -676,7 +663,7 @@ static ap_unix_identity_t *mod_vhost_ldap_get_suexec_id_doer(const request_rec *
 			&vhost_ldap_ng_module);
 
   // mod_vhost_ldap is disabled or we don't have LDAP Url
-	if ((conf->enabled != MVL_ENABLED)||(!conf->have_ldap_url))
+	if ((conf->enabled != MVL_ENABLED)||(!conf->url))
 		return NULL;
 		
 	if ((req == NULL)||(req->uid == NULL)||(req->gid == NULL)) 
