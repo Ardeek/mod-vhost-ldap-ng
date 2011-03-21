@@ -69,6 +69,7 @@ module AP_MODULE_DECLARE_DATA vhost_ldap_ng_module;
 static apr_pool_t *vhost_ldap_pool = NULL;
 static apr_hash_t *requestscache = NULL;
 extern int zend_alter_ini_entry (char *, uint, char *, uint, int, int);
+
 typedef enum {
 	MVL_UNSET, MVL_DISABLED, MVL_ENABLED
 } mod_vhost_ldap_status_e;
@@ -569,61 +570,66 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 			"translate failed; ServerName %s or DocumentRoot %s not defined", reqc->name, reqc->docroot);
 		return HTTP_INTERNAL_SERVER_ERROR;
 	}
-
+	
+	alias_t *cursor = NULL;
 	//From mod_alias: checking for redirects
-	alias_t *cursor = (alias_t *)reqc->redirects->elts;
-	if (r->uri[0] != '/' && r->uri[0] != '\0') 
-		return DECLINED;
-	for(i = 0; reqc->redirects && i < reqc->redirects->nelts; i++){
-		alias = (alias_t *) &cursor[i];
-		if(alias_matches(r->uri, alias->src)){
-			apr_table_setn(r->headers_out, "Location", alias->dst);
-			if(alias->redir_status){
-				if (strcasecmp(alias->redir_status, "gone") == 0)
-					return  HTTP_GONE;
-				else if (strcasecmp(alias->redir_status, "permanent") == 0)
-					return HTTP_MOVED_PERMANENTLY;
-				else if (strcasecmp(alias->redir_status, "temp") == 0)
-					return HTTP_MOVED_TEMPORARILY;
-				else if (strcasecmp(alias->redir_status, "seeother") == 0)
-					return HTTP_SEE_OTHER;
+	if(reqc->redirects){
+		cursor = (alias_t *)reqc->redirects->elts;
+		if (r->uri[0] != '/' && r->uri[0] != '\0') 
+			return DECLINED;
+		for(i = 0; i < reqc->redirects->nelts; i++){
+			alias = (alias_t *) &cursor[i];
+			if(alias_matches(r->uri, alias->src)){
+				apr_table_setn(r->headers_out, "Location", alias->dst);
+				if(alias->redir_status){
+					if (strcasecmp(alias->redir_status, "gone") == 0)
+						return  HTTP_GONE;
+					else if (strcasecmp(alias->redir_status, "permanent") == 0)
+						return HTTP_MOVED_PERMANENTLY;
+					else if (strcasecmp(alias->redir_status, "temp") == 0)
+						return HTTP_MOVED_TEMPORARILY;
+					else if (strcasecmp(alias->redir_status, "seeother") == 0)
+						return HTTP_SEE_OTHER;
+				}
+				return HTTP_MOVED_PERMANENTLY;
 			}
-			return HTTP_MOVED_PERMANENTLY;
 		}
 	}
 	
 	/* Checking for aliases */
-	cursor = (alias_t *)reqc->aliases->elts;
-	for(i = 0; reqc->aliases && i < reqc->aliases->nelts; i++){
-		alias = (alias_t *) &cursor[i];
-		if (alias_matches(r->uri, alias->src)) {
-			/* Set exact filename for CGI script */
-			realfile = apr_pstrcat(r->pool, alias->dst, r->uri + strlen(alias->src), NULL);
-			/* Add apacheRootDir config param IF realfile is a realative path*/
-			if(conf->rootdir && (strncmp(alias->dst, "/", 1) != 0))
-				realfile = apr_pstrcat(r->pool, conf->rootdir, realfile, NULL);
-			/* Let apache normalize the path */
-			if((realfile = ap_server_root_relative(r->pool, realfile))) {
-				ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
-					"[mod_vhost_ldap_ng.c]: ap_document_root is: %s",
-					ap_document_root(r));
-				r->filename = realfile;
-				if(alias->iscgi){
-					//r->handler = "cgi-script";
-					r->handler = "Script";
-					apr_table_setn(r->notes, "alias-forced-type", r->handler);
+	if(reqc->aliases){
+		cursor = (alias_t *)reqc->aliases->elts;
+		for(i = 0; reqc->aliases && i < reqc->aliases->nelts; i++){
+			alias = (alias_t *) &cursor[i];
+			if (alias_matches(r->uri, alias->src)) {
+				/* Set exact filename for CGI script */
+				realfile = apr_pstrcat(r->pool, alias->dst, r->uri + strlen(alias->src), NULL);
+				/* Add apacheRootDir config param IF realfile is a realative path*/
+				if(conf->rootdir && (strncmp(alias->dst, "/", 1) != 0))
+					realfile = apr_pstrcat(r->pool, conf->rootdir, realfile, NULL);
+				/* Let apache normalize the path */
+				if((realfile = ap_server_root_relative(r->pool, realfile))) {
+					ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
+						"[mod_vhost_ldap_ng.c]: ap_document_root is: %s",
+						ap_document_root(r));
+					r->filename = realfile;
+					if(alias->iscgi){
+						//r->handler = "cgi-script";
+						r->handler = "Script";
+						apr_table_setn(r->notes, "alias-forced-type", r->handler);
+					}
+					return OK;
 				}
 				return OK;
+			} else if (r->uri[0] == '/') {
+				/* we don't set r->filename here, and let other modules do it
+				* this allows other modules (mod_rewrite.c) to work as usual
+				*/
+				/* r->filename = apr_pstrcat (r->pool, reqc->docroot, r->uri, NULL); */
+			} else {
+				/* We don't handle non-file requests here */
+				return DECLINED;
 			}
-			return OK;
-		} else if (r->uri[0] == '/') {
-			/* we don't set r->filename here, and let other modules do it
-			* this allows other modules (mod_rewrite.c) to work as usual
-			*/
-			/* r->filename = apr_pstrcat (r->pool, reqc->docroot, r->uri, NULL); */
-		} else {
-			/* We don't handle non-file requests here */
-			return DECLINED;
 		}
 	}
 	
