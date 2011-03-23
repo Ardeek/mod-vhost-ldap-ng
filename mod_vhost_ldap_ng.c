@@ -25,7 +25,7 @@
 
 
 #define CORE_PRIVATE
-
+#include "config.h"
 #ifdef APR_HAVE_UNISTD_H
 #include <unistd.h>
 #endif
