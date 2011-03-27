@@ -25,11 +25,9 @@
 
 
 #define CORE_PRIVATE
-#include "config.h"
 #ifdef APR_HAVE_UNISTD_H
 #include <unistd.h>
 #endif
-
 #include "httpd.h"
 #include "http_config.h"
 #include "http_core.h"
@@ -40,7 +38,13 @@
 #include "apr_strings.h"
 #include "apr_tables.h"
 #include "util_ldap.h"
-
+/* trick to avoid make warning */
+#undef PACKAGE_BUGREPORT
+#undef PACKAGE_NAME
+#undef PACKAGE_STRING
+#undef PACKAGE_TARNAME
+#undef PACKAGE_VERSION
+#include "config.h"
 
 #if !defined(WIN32) && !defined(OS2) && !defined(BEOS) && !defined(NETWARE)
 	#define HAVE_UNIX_SUEXEC
@@ -64,6 +68,12 @@
 #define PHP_INI_STAGE_DEACTIVATE        (1<<3)
 #define PHP_INI_STAGE_RUNTIME           (1<<4)
 
+#define REDIR_GONE		(1<<0)
+#define REDIR_PERMANENT		(1<<1)
+#define REDIR_TEMP		(1<<2)
+#define REDIR_SEEOTHER		(1<<3)
+#define ISCGI			(1<<4)
+
 module AP_MODULE_DECLARE_DATA vhost_ldap_ng_module;
 
 static apr_pool_t *vhost_ldap_pool = NULL;
@@ -75,20 +85,18 @@ typedef enum {
 } mod_vhost_ldap_status_e;
 
 typedef struct mod_vhost_ldap_config_t {
-	mod_vhost_ldap_status_e enabled;			/* Is vhost_ldap enabled? */
+	mod_vhost_ldap_status_e enabled;	/* Is vhost_ldap enabled? */
 	/* These parameters are all derived from the VhostLDAPURL directive */
-	char *url;				/* String representation of LDAP URL */
+	char *url;			/* String representation of LDAP URL */
 	char *basedn;			/* Base DN to do all searches from */
-	int scope;				/* Scope of the search */
+	int scope;			/* Scope of the search */
 	char *filter;			/* Filter to further limit the search  */
 	char *binddn;			/* DN to bind to server (can be NULL) */
 	char *bindpw;			/* Password to bind to server (can be NULL) */
 	char *fallback_name;    /* Fallback virtual host ServerName*/
 	char *fallback_docroot;	/* Fallback virtual host documentroot*/
 	char *rootdir;
-#ifdef HAVEPHP
 	char *php_includepath;
-#endif
 } mod_vhost_ldap_config_t;
 
 typedef struct mod_vhost_ldap_request_t {
@@ -112,8 +120,7 @@ typedef struct mod_vhost_ldap_request_t {
 typedef struct alias_t {
 	char *src;
 	char *dst;
-	char *redir_status;
-	int iscgi;
+	uint8_t flags;
 } alias_t;
 
 char *attributes[] = {
@@ -283,7 +290,7 @@ static const char *mod_vhost_ldap_set_fallback_docroot(cmd_parms *cmd, void *dum
 	conf->fallback_docroot = apr_pstrdup(cmd->pool, fallback);
 	return NULL;
 }
-#ifdef HAVEPHP
+
 static const char *mod_vhost_ldap_set_phpincludepath(cmd_parms *cmd, void *dummy, const char *path)
 {
 	mod_vhost_ldap_config_t *conf =
@@ -291,7 +298,7 @@ static const char *mod_vhost_ldap_set_phpincludepath(cmd_parms *cmd, void *dummy
 	conf->php_includepath = apr_pstrdup(cmd->pool, path);
 	return NULL;
 }
-#endif
+
 command_rec mod_vhost_ldap_cmds[] = {
 	AP_INIT_TAKE1("VhostLDAPURL", mod_vhost_ldap_parse_url, NULL, RSRC_CONF,
 					"URL to define LDAP connection.\n"),
@@ -319,9 +326,7 @@ command_rec mod_vhost_ldap_cmds[] = {
 					"is not found in LDAP database. This option can be used to display"
 					"\"virtual host not found\" type of page."),
 	AP_INIT_TAKE1("VhostLDAProotdir", mod_vhost_ldap_set_rootdir, NULL, RSRC_CONF, "Configurable rootDir for vhosts"),
-#ifdef HAVEPHP
 	AP_INIT_TAKE1("phpIncludePath",mod_vhost_ldap_set_phpincludepath, NULL, RSRC_CONF, "php include_path configuration for vhost"),
-#endif
 	{NULL}
 };
 
@@ -485,10 +490,10 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 							if(strchr(eValues[k], ' ')){
 								alias = apr_array_push(reqc->aliases);
 								attribute_tokenizer((char *)eValues[k], &alias->src, &alias->dst, NULL);
-								alias->iscgi = 0;
+								alias->flags |= ISCGI;
 							}else{
 								ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
-												"[mod_vhost_ldap_ng.c]: Wrong apacheAlias parameter: %s", eValues[k]);
+									"[mod_vhost_ldap_ng.c]: Wrong apacheAlias parameter: %s", eValues[k]);
 							}
 						}
 					}else if(strcasecmp (attributes[i], "apacheScriptAlias") == 0){
@@ -497,22 +502,36 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 							if(strchr(eValues[k], ' ')){
 								alias = apr_array_push(reqc->aliases);
 								attribute_tokenizer((char *)eValues[k], &alias->src, &alias->dst, NULL);
-								alias->iscgi = 1;
+								alias->flags |= ISCGI;
 							}else{
 								ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
-												"[mod_vhost_ldap_ng.c]: Wrong apacheScriptAlias parameter: %s", eValues[k]);
+									"[mod_vhost_ldap_ng.c]: Wrong apacheScriptAlias parameter: %s", eValues[k]);
 							}
 						}
 					}else if(strcasecmp (attributes[i], "apacheRedirect") == 0){
 						while(k){
 							k--; 
 							if(strchr(eValues[k], ' ')){
+								char *rtemp = NULL;
 								alias = apr_array_push(reqc->redirects);
-								attribute_tokenizer((char *)eValues[k], &alias->src, &alias->dst, NULL);
-								alias->iscgi = 0;
+								attribute_tokenizer((char *)eValues[k], &alias->src, &rtemp, &alias->dst, NULL);
+								alias->flags |= ISCGI;
+								if(alias->dst != NULL){
+        		        	                        	if (strcasecmp(rtemp, "gone") == 0)
+										alias->flags ^= REDIR_GONE;
+        		        	                        	else if (strcasecmp(rtemp, "permanent") == 0)
+										alias->flags ^= REDIR_PERMANENT;
+        		        	                        	else if (strcasecmp(rtemp, "temp") == 0)
+										alias->flags ^= REDIR_TEMP;
+									else if (strcasecmp(rtemp, "seeother") == 0)
+										alias->flags ^= REDIR_SEEOTHER;
+									else
+										ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
+	                                                                        "[mod_vhost_ldap_ng.c]: Wrong apacheRedirect type: %s", rtemp);
+								}
 							}else{
 								ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
-												"[mod_vhost_ldap_ng.c]: Wrong apacheRedirect parameter: %s", eValues[k]);
+									"[mod_vhost_ldap_ng.c]: Wrong apacheRedirect parameter: %s", eValues[k]);
 							}
 						}
 					}else if(strcasecmp(attributes[i], "apacheSuexecUid") == 0){
@@ -581,6 +600,7 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 			alias = (alias_t *) &cursor[i];
 			if(alias_matches(r->uri, alias->src)){
 				apr_table_setn(r->headers_out, "Location", alias->dst);
+				/* OLD STUFF
 				if(alias->redir_status){
 					if (strcasecmp(alias->redir_status, "gone") == 0)
 						return  HTTP_GONE;
@@ -591,7 +611,11 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 					else if (strcasecmp(alias->redir_status, "seeother") == 0)
 						return HTTP_SEE_OTHER;
 				}
-				return HTTP_MOVED_PERMANENTLY;
+				*/
+				if(alias->flags & REDIR_GONE) return HTTP_GONE;
+				else if(alias->flags & REDIR_TEMP) return HTTP_MOVED_TEMPORARILY;
+				else if(alias->flags & REDIR_SEEOTHER) return HTTP_SEE_OTHER;
+				else return HTTP_MOVED_PERMANENTLY;
 			}
 		}
 	}
@@ -613,7 +637,7 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 						"[mod_vhost_ldap_ng.c]: ap_document_root is: %s",
 						ap_document_root(r));
 					r->filename = realfile;
-					if(alias->iscgi){
+					if(alias->flags & ISCGI){
 						//r->handler = "cgi-script";
 						r->handler = "Script";
 						apr_table_setn(r->notes, "alias-forced-type", r->handler);
