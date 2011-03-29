@@ -512,22 +512,24 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 						while(k){
 							k--; 
 							if(strchr(eValues[k], ' ')){
-								char *rtemp = NULL;
+								char *rtemp[] = {NULL, NULL};
 								alias = apr_array_push(reqc->redirects);
-								attribute_tokenizer((char *)eValues[k], &alias->src, &rtemp, &alias->dst, NULL);
-								alias->flags |= ISCGI;
-								if(alias->dst != NULL){
-        		        	                        	if (strcasecmp(rtemp, "gone") == 0)
-										alias->flags ^= REDIR_GONE;
-        		        	                        	else if (strcasecmp(rtemp, "permanent") == 0)
-										alias->flags ^= REDIR_PERMANENT;
-        		        	                        	else if (strcasecmp(rtemp, "temp") == 0)
-										alias->flags ^= REDIR_TEMP;
-									else if (strcasecmp(rtemp, "seeother") == 0)
-										alias->flags ^= REDIR_SEEOTHER;
+								attribute_tokenizer((char *)eValues[k], &alias->src, &rtemp[0], &rtemp[1], NULL);
+								if(rtemp[1] != NULL){
+									if (strcasecmp(rtemp[0], "gone") == 0)
+										alias->flags |= REDIR_GONE;
+									else if (strcasecmp(rtemp[0], "permanent") == 0)
+										alias->flags |= REDIR_PERMANENT;
+									else if (strcasecmp(rtemp[0], "temp") == 0)
+										alias->flags |= REDIR_TEMP;
+									else if (strcasecmp(rtemp[0], "seeother") == 0)
+										alias->flags |= REDIR_SEEOTHER;
 									else
 										ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
-	                                                                        "[mod_vhost_ldap_ng.c]: Wrong apacheRedirect type: %s", rtemp);
+											"[mod_vhost_ldap_ng.c]: Wrong apacheRedirect type: %s", rtemp[0]);
+									alias->dst = rtemp[1];
+								}else{
+									alias->dst = rtemp[0];
 								}
 							}else{
 								ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,

@@ -24,6 +24,8 @@ AC_ARG_ENABLE([debug], [  --enable-debug   enable debugging symbols],
 
 if test "x${debug}" = xyes; then
 	DEBUG="-Wc,-g"
+else
+	DEBUG="-Wc,-O3"
 fi
 AC_SUBST(PHP)
 AC_SUBST(DEBUG)
