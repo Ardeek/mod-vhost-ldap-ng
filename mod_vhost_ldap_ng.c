@@ -490,7 +490,6 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 							if(strchr(eValues[k], ' ')){
 								alias = apr_array_push(reqc->aliases);
 								attribute_tokenizer((char *)eValues[k], &alias->src, &alias->dst, NULL);
-								alias->flags |= ISCGI;
 							}else{
 								ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
 									"[mod_vhost_ldap_ng.c]: Wrong apacheAlias parameter: %s", eValues[k]);
