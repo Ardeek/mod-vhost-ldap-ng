@@ -109,4 +109,5 @@ objectclass ( 1.3.6.1.4.1.8387.1.2.1 NAME 'apacheConfig'
 	SUP 'top'
 	MUST ( apacheServerName $ apacheDocumentRoot )
         MAY ( apacheServerAlias $ apacheServerAdmin $ apacheScriptAlias $
-                apacheSuexecUid $ apacheSuexecGid $ apacheVhostEnabled) )
+                apacheSuexecUid $ apacheSuexecGid $ apacheVhostEnabled $
+                phpOpenBasedir $ phpIncludePath) )
