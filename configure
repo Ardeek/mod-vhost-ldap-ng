@@ -3033,7 +3033,7 @@ fi
 
 
 if test "x${php}" = xyes; then
-	PHP="-DWITH_PHP"
+	PHP="-DHAVEPHP"
 fi
 # Check whether --enable-debug was given.
 if test "${enable_debug+set}" = set; then :
@@ -3045,6 +3045,8 @@ fi
 
 if test "x${debug}" = xyes; then
 	DEBUG="-Wc,-g"
+else
+	DEBUG="-Wc,-O3"
 fi
 
 

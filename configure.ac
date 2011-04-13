@@ -17,7 +17,7 @@ AC_ARG_ENABLE([php], [  --enable-php	enable mod_php options],
 		[php=${enableval}], [php=no])
 
 if test "x${php}" = xyes; then
-	PHP="-DWITH_PHP"
+	PHP="-DHAVEPHP"
 fi
 AC_ARG_ENABLE([debug], [  --enable-debug   enable debugging symbols],
 		[debug=${enableval}], [debug=no])
