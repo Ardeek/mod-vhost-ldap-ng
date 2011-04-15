@@ -555,7 +555,10 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 						else
 							reqc->php_includepath = apr_pstrdup(vhost_ldap_pool, eValues[0]);
 					}else if(strcasecmp (attributes[i], "phpOpenBasedir") == 0){
-						reqc->php_openbasedir = apr_pstrdup(vhost_ldap_pool, eValues[0]);
+						if(conf->rootdir && (strncmp(eValues[0], "/", 1) != 0))
+							reqc->php_openbasedir = apr_pstrcat(vhost_ldap_pool, conf->rootdir, eValues[0], NULL);
+						else
+							reqc->php_openbasedir = apr_pstrdup(vhost_ldap_pool, eValues[0]);
 					}
 #endif
 				}
@@ -577,12 +580,11 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 		include = apr_pstrcat(r->pool, conf->php_includepath, ":", reqc->docroot, NULL);
 	else
 		include = apr_pstrcat(r->pool, reqc->php_includepath, ":", conf->php_includepath, ":", reqc->docroot, NULL);
-	if(!reqc->php_openbasedir)
-		openbasedir = apr_pstrdup(r->pool, include);
-	else
-		openbasedir = apr_pstrcat(r->pool, reqc->php_openbasedir, ":", include, NULL);
 	zend_alter_ini_entry("include_path", strlen("include_path") + 1, (void *)include, strlen(include), PHP_INI_SYSTEM, PHP_INI_STAGE_RUNTIME);
-	zend_alter_ini_entry("open_basedir", strlen("open_basedir") + 1, (void *)openbasedir, strlen(openbasedir), PHP_INI_SYSTEM, PHP_INI_STAGE_RUNTIME);
+	if(reqc->php_openbasedir){
+		openbasedir = apr_pstrcat(r->pool, reqc->php_openbasedir, ":", include, NULL);
+		zend_alter_ini_entry("open_basedir", strlen("open_basedir") + 1, (void *)openbasedir, strlen(openbasedir), PHP_INI_SYSTEM, PHP_INI_STAGE_RUNTIME);
+	}
 #endif
 	if ((reqc->name == NULL)||(reqc->docroot == NULL)) {
 		ap_log_rerror(APLOG_MARK, APLOG_ERR|APLOG_NOERRNO, 0, r, 
