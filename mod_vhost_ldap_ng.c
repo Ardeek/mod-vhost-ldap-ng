@@ -189,6 +189,30 @@ mod_vhost_ldap_create_server_config (apr_pool_t *p, server_rec *s)
 #endif
 	return conf;
 }
+static void *
+mod_vhost_ldap_merge_server_config(apr_pool_t *p, void *parentv, void *childv)
+{
+	mod_vhost_ldap_config_t *parent = (mod_vhost_ldap_config_t *) parentv;
+    mod_vhost_ldap_config_t *child  = (mod_vhost_ldap_config_t *) childv;
+	mod_vhost_ldap_config_t *conf = apr_pcalloc(p, sizeof(mod_vhost_ldap_config_t));
+
+	if(child->enabled == MVL_UNSET){
+		conf->enabled = parent->enabled;
+	}else{
+		conf->enabled = child->enabled;
+	}
+    conf->url = parent->url;
+    conf->basedn = parent->basedn;
+    conf->scope = parent->scope;
+    conf->filter = parent->filter;
+    conf->binddn = parent->binddn;
+    conf->bindpw = parent->bindpw;
+    conf->fallback_name = parent->fallback_name;
+    conf->fallback_docroot = parent->fallback_docroot;
+    conf->rootdir = parent->rootdir;
+    conf->php_includepath = parent->php_includepath;
+	return conf;
+}
 
 static const char *mod_vhost_ldap_set_basedn(cmd_parms *cmd, 
 						void *dummy,
@@ -242,7 +266,7 @@ static const char *mod_vhost_ldap_parse_url(cmd_parms *cmd,
 static const char *mod_vhost_ldap_set_enabled(cmd_parms *cmd, void *dummy, int enabled)
 {
 	mod_vhost_ldap_config_t *conf =
-	(mod_vhost_ldap_config_t *)ap_get_module_config(cmd->server->module_config,	&vhost_ldap_ng_module);
+		ap_get_module_config(cmd->server->module_config, &vhost_ldap_ng_module);
 	conf->enabled = (enabled) ? MVL_ENABLED : MVL_DISABLED;
 	return NULL;
 }
@@ -418,9 +442,9 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 	alias_t *alias = NULL;
 	int i = 0, ret = 0;
 	LDAPMessage *ldapmsg = NULL, *vhostentry = NULL;
-	// mod_vhost_ldap is disabled or we don't have LDAP Url
-	if ((conf->enabled != MVL_ENABLED)||(!conf->url)||(!r->hostname)){
-		ap_log_rerror(APLOG_MARK, APLOG_ERR|APLOG_NOERRNO, 0, r, 
+	
+	if (conf->enabled != MVL_ENABLED || !conf->url || !r->hostname){
+		ap_log_rerror(APLOG_MARK, APLOG_INFO|APLOG_NOERRNO, 0, r, 
 				"[mod_vhost_ldap_ng.c] Module disabled");
 		return DECLINED;
 	}
@@ -428,7 +452,7 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 	//Search in cache
 	reqc = (mod_vhost_ldap_request_t *)get_from_requestscache(r);
 	if(!reqc){
-		ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r, 
+		ap_log_rerror(APLOG_MARK, APLOG_INFO|APLOG_NOERRNO, 0, r, 
 				"[mod_vhost_ldap_ng.c] Cannot resolve data from cache");
 		reqc = apr_palloc(vhost_ldap_pool, sizeof(mod_vhost_ldap_request_t));
 		memset(reqc, 0, sizeof(mod_vhost_ldap_request_t));
@@ -632,8 +656,8 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 				/* Set exact filename for CGI script */
 				realfile = apr_pstrcat(r->pool, alias->dst, r->uri + strlen(alias->src), NULL);
 				/* Add apacheRootDir config param IF realfile is a realative path*/
-				if(conf->rootdir && (strncmp(alias->dst, "/", 1) != 0))
-					realfile = apr_pstrcat(r->pool, conf->rootdir, realfile, NULL);
+				if(conf->rootdir && (strncmp(realfile, "/", 1) != 0))
+					realfile = apr_pstrcat(r->pool, reqc->docroot, "/", realfile, NULL);
 				/* Let apache normalize the path */
 				if((realfile = ap_server_root_relative(r->pool, realfile))) {
 					ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
@@ -741,7 +765,7 @@ module AP_MODULE_DECLARE_DATA vhost_ldap_ng_module = {
 	NULL,
 	NULL,
 	mod_vhost_ldap_create_server_config,
-	NULL,
+	mod_vhost_ldap_merge_server_config,
 	mod_vhost_ldap_cmds,
 	mod_vhost_ldap_register_hooks,
 };
