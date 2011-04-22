@@ -124,7 +124,9 @@ typedef struct alias_t {
 } alias_t;
 
 char *attributes[] = {
-		"apacheServerName", "apacheDocumentRoot", "apacheScriptAlias", "apacheSuexecUid", "apacheSuexecGid", "apacheServerAdmin", "apacheAlias", "apacheRedirect",
+		"apacheServerName", "apacheDocumentRoot", "apacheScriptAlias",
+		"apacheSuexecUid", "apacheSuexecGid", "apacheServerAdmin",
+		"apacheAlias", "apacheRedirect",
 #ifdef HAVEPHP
 		"phpOpenBasedir", "phpIncludePath",
 #endif
@@ -137,24 +139,22 @@ static int alias_matches(const char *uri, const char *alias_fakename)
 {
     const char *aliasp = alias_fakename, *urip = uri;
 
-    while (*aliasp) {
-        if (*aliasp == '/') {
-            if (*urip != '/')
+    while(*aliasp){
+        if(*aliasp == '/'){
+            if(*urip != '/')
                 return 0;
-
-            do {
+            do{
                 ++aliasp;
-            } while (*aliasp == '/');
-            do {
+            }while (*aliasp == '/');
+            do{
                 ++urip;
-            } while (*urip == '/');
-        }
-        else {
-            if (*urip++ != *aliasp++)
+            }while(*urip == '/');
+        }else{
+            if(*urip++ != *aliasp++)
                 return 0;
         }
     }
-    if (aliasp[-1] != '/' && *urip != '\0' && *urip != '/')
+    if(aliasp[-1] != '/' && *urip != '\0' && *urip != '/')
         return 0;
     return urip - uri;
 }
@@ -189,6 +189,7 @@ mod_vhost_ldap_create_server_config (apr_pool_t *p, server_rec *s)
 #endif
 	return conf;
 }
+
 static void *
 mod_vhost_ldap_merge_server_config(apr_pool_t *p, void *parentv, void *childv)
 {
@@ -503,7 +504,7 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 					}else if(strcasecmp(attributes[i], "apacheServerAdmin") == 0){
 						reqc->admin = apr_pstrdup(vhost_ldap_pool, eValues[0]);
 					}else if(strcasecmp(attributes[i], "apacheDocumentRoot") == 0){
-						reqc->docroot = apr_pstrdup(r->pool, eValues[0]);
+						reqc->docroot = apr_pstrdup(vhost_ldap_pool, eValues[0]);
 						/* Make it absolute, relative to ServerRoot */
 						if(conf->rootdir && (strncmp(reqc->docroot, "/", 1) != 0))
 							reqc->docroot = apr_pstrcat(vhost_ldap_pool, conf->rootdir, reqc->docroot, NULL);
