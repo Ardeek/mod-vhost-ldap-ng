@@ -111,7 +111,7 @@ typedef struct mod_vhost_ldap_request_t {
 	char *php_includepath;
 	char *php_openbasedir;
 #endif	
-	int decline;
+	short int decline;
 	apr_time_t expires;		/* Expire time from cache */
 	apr_array_header_t *aliases;
 	apr_array_header_t *redirects;	
@@ -456,7 +456,6 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 		ap_log_rerror(APLOG_MARK, APLOG_INFO|APLOG_NOERRNO, 0, r, 
 				"[mod_vhost_ldap_ng.c] Cannot resolve data from cache");
 		reqc = apr_palloc(vhost_ldap_pool, sizeof(mod_vhost_ldap_request_t));
-		memset(reqc, 0, sizeof(mod_vhost_ldap_request_t));
 	}
 	if (reqc->expires < apr_time_now()){
 		//Search ldap
@@ -481,7 +480,8 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 		if(ldap_count_entries(ld, ldapmsg)!=1){
 			if(!conf->fallback_name || !conf->fallback_docroot){
 				reqc->name = apr_pstrdup(vhost_ldap_pool, r->hostname);
-				reqc->decline = DECLINED;
+				reqc->decline = 1;
+				reqc->admin = apr_pstrdup(r->server->server_admin);
 				add_to_requestscache(reqc, r);
 				return DECLINED;
 			}else{
@@ -595,7 +595,7 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 		ldapdestroy(&ld);
 		add_to_requestscache(reqc, r);
 	}
-	if(reqc->decline == DECLINED)
+	if(reqc->decline)
 		return DECLINED;
 	
 	ap_set_module_config(r->request_config, &vhost_ldap_ng_module, reqc);
@@ -700,7 +700,7 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 	core->ap_document_root = apr_pstrdup(r->pool, reqc->docroot);
 	if (!ap_is_directory(r->pool, reqc->docroot))
 		ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,
-			"[mod_vhost_ldap.c] set_document_root: Warning: DocumentRoot [%s] does not exist", core->ap_document_root);
+			"[mod_vhost_ldap_ng.c] set_document_root: Warning: DocumentRoot [%s] does not exist", core->ap_document_root);
 	//ap_set_module_config(r->server->module_config, &core_module, core);
 
 	/* Hack to allow post-processing by other modules (mod_rewrite, mod_alias) */
