@@ -115,6 +115,7 @@ typedef struct mod_vhost_ldap_request_t {
 	apr_time_t expires;		/* Expire time from cache */
 	apr_array_header_t *aliases;
 	apr_array_header_t *redirects;	
+	apr_table_t *env;
 } mod_vhost_ldap_request_t;
 
 typedef struct alias_t {
@@ -124,12 +125,13 @@ typedef struct alias_t {
 } alias_t;
 
 char *attributes[] = {
-		"apacheServerName", "apacheDocumentRoot", "apacheScriptAlias",
-		"apacheSuexecUid", "apacheSuexecGid", "apacheServerAdmin",
-		"apacheAlias", "apacheRedirect",
+	"apacheServerName", "apacheDocumentRoot", "apacheScriptAlias",
+	"apacheSuexecUid", "apacheSuexecGid", "apacheServerAdmin",
+	"apacheAlias", "apacheRedirect",
 #ifdef HAVEPHP
-		"phpOpenBasedir", "phpIncludePath",
+	"phpOpenBasedir", "phpIncludePath",
 #endif
+	"SetEnv", "PassEnv",
 	0 };
 
 static int total_modules;
@@ -473,6 +475,7 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 		}else{
 			reqc->aliases = (apr_array_header_t *)apr_array_make(vhost_ldap_pool, 2, sizeof(alias_t));
 			reqc->redirects = (apr_array_header_t *)apr_array_make(vhost_ldap_pool, 2, sizeof(alias_t));
+			reqc->env = apr_table_make(vhost_ldap_pool, 2);
 			vhostentry = ldap_first_entry(ld, ldapmsg);
 			reqc->dn = ldap_get_dn(ld, vhostentry);
 			i=0;
@@ -506,7 +509,7 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 								alias->dst = apr_pstrdup(vhost_ldap_pool, str[1]);
 							}
 						}
-					}else if(strcasecmp (attributes[i], "apacheScriptAlias") == 0){
+					}else if(strcasecmp(attributes[i], "apacheScriptAlias") == 0){
 						while(k){
 							k--; 
 							for(j = 0; j < 2; j++)
@@ -565,18 +568,31 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 								APR_OS_DEFAULT, r->pool);
 					}
 #ifdef HAVEPHP
-					else if(strcasecmp (attributes[i], "phpIncludePath") == 0){
+					else if(strcasecmp(attributes[i], "phpIncludePath") == 0){
 						if(conf->php_includepath)
 							reqc->php_includepath = apr_pstrcat(vhost_ldap_pool, conf->php_includepath, ":", eValues[0], NULL);
 						else
 							reqc->php_includepath = apr_pstrdup(vhost_ldap_pool, eValues[0]);
-					}else if(strcasecmp (attributes[i], "phpOpenBasedir") == 0){
+					}else if(strcasecmp(attributes[i], "phpOpenBasedir") == 0){
 						if(conf->rootdir && (strncmp(eValues[0], "/", 1) != 0))
 							reqc->php_openbasedir = apr_pstrcat(vhost_ldap_pool, conf->rootdir, eValues[0], NULL);
 						else
 							reqc->php_openbasedir = apr_pstrdup(vhost_ldap_pool, eValues[0]);
 					}
+					else if(strcasecmp(attributes[i], "php_admin_value") == 0){
+					}
 #endif
+					else if(strcasecmp(attributes[i], "SetEnv") == 0){
+						for(j = 0; j < 2; j++)
+							str[j] = ap_getword_conf(r->pool, (const char **)&eValues[0]);
+						if(str[--j] == '\0')
+							ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
+							"[mod_vhost_ldap_ng.c]: Wrong apacheScriptAlias parameter: %s", eValues[0]);
+						else{
+							apr_table_set(reqc->env, str[0], str[1]);
+						}
+					}else if(strcasecmp(attributes[i], "PassEnv") == 0){
+					}
 				}
 				i++;
 			}
@@ -590,6 +606,9 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 		return DECLINED;
 	
 	ap_set_module_config(r->request_config, &vhost_ldap_ng_module, reqc);
+	apr_table_t *e = r->subprocess_env;
+	if(apr_table_elts(reqc->env)->nelts)
+		r->subprocess_env = apr_table_overlay(r->pool, e, reqc->env);
 #ifdef HAVEPHP
 	char *openbasedir, *include;
 	if(!reqc->php_includepath)
@@ -738,18 +757,14 @@ static ap_unix_identity_t *mod_vhost_ldap_get_suexec_id_doer(const request_rec *
 static void
 mod_vhost_ldap_register_hooks (apr_pool_t * p)
 {
-	/*
-	* Run before mod_rewrite
-	*/
+	/* Run before mod_rewrite */
 	static const char * const aszRewrite[]={ "mod_rewrite.c", NULL };
 	ap_hook_child_init(mod_vhost_ldap_child_init, NULL, NULL, APR_HOOK_MIDDLE);
 	ap_hook_post_config(mod_vhost_ldap_post_config, NULL, NULL, APR_HOOK_MIDDLE);
 	ap_hook_translate_name(mod_vhost_ldap_translate_name, NULL, aszRewrite, APR_HOOK_FIRST);
-	
 #ifdef HAVE_UNIX_SUEXEC
 	ap_hook_get_suexec_identity(mod_vhost_ldap_get_suexec_id_doer, NULL, NULL, APR_HOOK_MIDDLE);
 #endif
-
 }
 
 module AP_MODULE_DECLARE_DATA vhost_ldap_ng_module = {
