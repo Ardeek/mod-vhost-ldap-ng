@@ -467,6 +467,9 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 				reqc->decline = 1;
 				reqc->admin = apr_pstrdup(vhost_ldap_pool, r->server->server_admin);
 				add_to_requestscache(reqc, r);
+				if(ldapmsg)
+					ldap_msgfree(ldapmsg);
+				ldapdestroy(&ld);
 				return DECLINED;
 			}else{
 				reqc->name = conf->fallback_name;
@@ -668,7 +671,7 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 				realfile = apr_pstrcat(r->pool, alias->dst, r->uri + strlen(alias->src), NULL);
 				/* Add apacheRootDir config param IF realfile is a realative path*/
 				if(conf->rootdir && (strncmp(realfile, "/", 1) != 0))
-					realfile = apr_pstrcat(r->pool, reqc->docroot, "/", realfile, NULL);
+					realfile = apr_pstrcat(r->pool, conf->rootdir, "/", realfile, NULL);
 				/* Let apache normalize the path */
 				if((realfile = ap_server_root_relative(r->pool, realfile))) {
 					ap_log_rerror(APLOG_MARK, APLOG_DEBUG|APLOG_NOERRNO, 0, r,
