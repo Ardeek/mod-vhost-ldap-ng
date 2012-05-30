@@ -1,0 +1,56 @@
+dn: cn=mod_vhost_ldap_ng,cn=schema,cn=config
+objectClass: olcSchemaConfig
+cn: mod_vhost_ldap_ng
+olcAttributeTypes: {0}( 1.3.6.1.4.1.8387.1.1.2 NAME 'apacheServerName' DESC 'm
+ od_vhost_ldap_ng: Apache ServerName' SUP name EQUALITY caseIgnoreMatch SUBSTR
+  caseIgnoreSubstringsMatch SYNTAX 1.3.6.1.4.1.1466.115.121.1.15{256} SINGLE-V
+ ALUE )
+olcAttributeTypes: {1}( 1.3.6.1.4.1.8387.1.1.3 NAME 'apacheServerAlias' DESC '
+ mod_vhost_ldap_ng: Apache ServerAlias' SUP name EQUALITY caseIgnoreMatch SUBS
+ TR caseIgnoreSubstringsMatch SYNTAX 1.3.6.1.4.1.1466.115.121.1.15{256} )
+olcAttributeTypes: {2}( 1.3.6.1.4.1.8387.1.1.4 NAME 'apacheDocumentRoot' DESC 
+ 'mod_vhost_ldap_ng: Apache DocumentRoot' SUP name EQUALITY caseIgnoreMatch SU
+ BSTR caseIgnoreSubstringsMatch SYNTAX 1.3.6.1.4.1.1466.115.121.1.15{256} SING
+ LE-VALUE )
+olcAttributeTypes: {3}( 1.3.6.1.4.1.8387.1.1.5 NAME 'apacheServerAdmin' DESC '
+ mod_vhost_ldap_ng: Apache ServerAdmin' SUP name EQUALITY caseIgnoreMatch SUBS
+ TR caseIgnoreSubstringsMatch SYNTAX 1.3.6.1.4.1.1466.115.121.1.15{256} SINGLE
+ -VALUE )
+olcAttributeTypes: {4}( 1.3.6.1.4.1.14287.1.1.6 NAME 'apacheScriptAlias' DESC 
+ 'mod_cfg_ldap: Apache ScriptAlias' SUP name EQUALITY caseIgnoreMatch SUBSTR c
+ aseIgnoreSubstringsMatch SYNTAX 1.3.6.1.4.1.1466.115.121.1.15{256} )
+olcAttributeTypes: {5}( 1.3.6.1.4.1.8387.1.1.7 NAME 'apacheSuexecUid' DESC 'mo
+ d_vhost_ldap_ng: Apache SuexecUid' SUP name EQUALITY caseIgnoreMatch SUBSTR c
+ aseIgnoreSubstringsMatch SYNTAX 1.3.6.1.4.1.1466.115.121.1.15{256} SINGLE-VAL
+ UE )
+olcAttributeTypes: {6}( 1.3.6.1.4.1.8387.1.1.8 NAME 'apacheSuexecGid' DESC 'mo
+ d_vhost_ldap_ng: Apache SuexecGid' SUP name EQUALITY caseIgnoreMatch SUBSTR c
+ aseIgnoreSubstringsMatch SYNTAX 1.3.6.1.4.1.1466.115.121.1.15{256} SINGLE-VAL
+ UE )
+olcAttributeTypes: {7}( 1.3.6.1.4.1.8387.1.1.9 NAME 'apacheVhostEnabled' DESC 
+ 'mod_vhost_ldap_ng: Apache Vhost enabled' SUP name EQUALITY caseIgnoreMatch S
+ UBSTR caseIgnoreSubstringsMatch SYNTAX 1.3.6.1.4.1.1466.115.121.1.15{256} SIN
+ GLE-VALUE )
+olcAttributeTypes: {8}( 1.3.6.1.4.1.8387.1.1.10 NAME 'apacheAlias' DESC 'mod_v
+ host_ldap_ng: Apache Alias' SUP name EQUALITY caseIgnoreMatch SUBSTR caseIgno
+ reSubstringsMatch SYNTAX 1.3.6.1.4.1.1466.115.121.1.15{256} )
+olcAttributeTypes: {9}( 1.3.6.1.4.1.8387.1.1.11 NAME 'apacheRedirect' DESC 'mo
+ d_vhost_ldap_ng: Apache Alias' SUP name EQUALITY caseIgnoreMatch SUBSTR caseI
+ gnoreSubstringsMatch SYNTAX 1.3.6.1.4.1.1466.115.121.1.15{256} )
+olcAttributeTypes: {10}( 1.3.6.1.4.1.8387.1.1.12 NAME 'apacheErrorLog' DESC 'm
+ od_vhost_ldap_ng: Apache ErrorLog' SUP name EQUALITY caseIgnoreMatch SUBSTR c
+ aseIgnoreSubstringsMatch SYNTAX 1.3.6.1.4.1.1466.115.121.1.15{256} )
+olcAttributeTypes: {11}( 1.3.6.1.4.1.8387.1.1.13 NAME 'phpOpenBasedir' DESC 'm
+ od_vhost_ldap_ng: PHP .ini value for open_basedir' SUP name EQUALITY caseIgno
+ reMatch SUBSTR caseIgnoreSubstringsMatch SYNTAX 1.3.6.1.4.1.1466.115.121.1.15
+ {256} SINGLE-VALUE )
+olcAttributeTypes: {12}( 1.3.6.1.4.1.8387.1.1.14 NAME 'phpIncludePath' DESC 'm
+ od_vhost_ldap_ng: PHP .ini value for include_path xxxxx' SUP name EQUALITY ca
+ seIgnoreMatch SUBSTR caseIgnoreSubstringsMatch SYNTAX 1.3.6.1.4.1.1466.115.12
+ 1.1.15{256} SINGLE-VALUE )
+olcObjectClasses: {0}( 1.3.6.1.4.1.8387.1.2.1 NAME 'apacheConfig' DESC 'xxxxxx
+ ' SUP top STRUCTURAL MUST ( apacheServerName $ apacheDocumentRoot ) MAY ( apa
+ cheServerAlias $ apacheServerAdmin $ apacheScriptAlias $ apacheSuexecUid $ ap
+ acheSuexecGid $ apacheVhostEnabled $ apacheSuexecUid $ apacheSuexecGid $ apac
+ heVhostEnabled $ phpOpenBasedir $ phpIncludePath $ apacheAlias $ apacheRedire
+ ct ) )
