@@ -419,8 +419,10 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 	mod_vhost_ldap_request_t *reqc = NULL;
 	mod_vhost_ldap_config_t *conf =
 	(mod_vhost_ldap_config_t *)ap_get_module_config(r->server->module_config, &vhost_ldap_ng_module);
+#if (AP_SERVER_MAJORVERSION_NUMBER == 2) && (AP_SERVER_MINORVERSION_NUMBER <= 2)
 	core_server_config *core =
 		(core_server_config *)ap_get_module_config(r->server->module_config, &core_module);
+#endif
 	LDAP *ld = NULL;
 	char *realfile = NULL;
 	char *myfilter = NULL;
@@ -705,6 +707,8 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 		return HTTP_INTERNAL_SERVER_ERROR;
 	}
 
+#if (AP_SERVER_MAJORVERSION_NUMBER == 2) && (AP_SERVER_MINORVERSION_NUMBER <= 2)
+	
 	r->server->server_hostname = apr_pstrdup(r->pool,reqc->name);
 
 	if (reqc->admin)
@@ -714,6 +718,9 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 	if (!ap_is_directory(r->pool, reqc->docroot))
 		ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,
 			"[mod_vhost_ldap_ng.c] set_document_root: Warning: DocumentRoot [%s] does not exist", core->ap_document_root);
+#else
+	
+#endif
 	//ap_set_module_config(r->server->module_config, &core_module, core);
 
 	/* Hack to allow post-processing by other modules (mod_rewrite, mod_alias) */

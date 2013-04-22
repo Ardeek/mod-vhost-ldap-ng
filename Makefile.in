@@ -1,4 +1,4 @@
-APXS=apxs2
+APXS=@APXS@
 VERSION := $(shell cat VERSION)
 
 mod_vhost_ldap_ng.o: mod_vhost_ldap_ng.c

@@ -27,6 +27,22 @@ if test "x${debug}" = xyes; then
 else
 	DEBUG="-Wc,-O3"
 fi
+
+AC_ARG_WITH([apxs-path],
+  [AS_HELP_STRING([--with-apxs-path], [Apxs Path])],
+  [APXSPATH=$withval],
+  [])
+if test "x${APXSPATH}" = "x"; then
+	AC_CHECK_PROGS(APXS, [apxs2 apxs], ["no"])
+else
+	AC_CHECK_PROGS(APXS, [apxs2 apxs], ["no"], [$APXSPATH])
+	APXS=$APXSPATH"/"$APXS
+fi
+
+if test "${APXS}" = no;then
+	AC_MSG_ERROR("No APXS found")
+fi
+AC_SUBST(APXS)
 AC_SUBST(PHP)
 AC_SUBST(DEBUG)
 # Checks for header files.
