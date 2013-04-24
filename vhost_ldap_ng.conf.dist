@@ -2,8 +2,10 @@
         VhostLDAPEnabled on
         VhostLDAPUrl  "ldap://127.0.0.1:389"
         VhostLDAPBaseDN "ou=domains,dc=example,dc=com"
-        VhostLDAPSearchScope "one" #one, sub, children
-        VhostLDAPFilter "apacheVhostEnabled=yes" #Filter to append 
+	#one, sub, children
+        VhostLDAPSearchScope "one"
+	#Append filter
+        VhostLDAPFilter "apacheVhostEnabled=yes"
         VhostLdapBindDN "cn=admin,dc=example,dc=com"
         VhostLDAPBindPassword "secret"
         VhostLDapRootDir "/var/www/"
