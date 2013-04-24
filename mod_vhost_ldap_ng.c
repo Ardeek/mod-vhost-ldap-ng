@@ -78,6 +78,7 @@ module AP_MODULE_DECLARE_DATA vhost_ldap_ng_module;
 
 static apr_pool_t *vhost_ldap_pool = NULL;
 static apr_hash_t *requestscache = NULL;
+static int mod_vhost_ldap_translate_name(request_rec *);
 extern int zend_alter_ini_entry (char *, uint, char *, uint, int, int);
 
 typedef enum {
@@ -426,8 +427,9 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 	LDAP *ld = NULL;
 	char *realfile = NULL;
 	char *myfilter = NULL;
-	alias_t *alias = NULL;
+	alias_t *alias = NULL, *cursor = NULL;
 	int i = 0, ret = 0;
+	apr_table_t *e;
 	LDAPMessage *ldapmsg = NULL, *vhostentry = NULL;
 	
 	if (conf->enabled != MVL_ENABLED || !conf->url || !r->hostname){
@@ -611,7 +613,7 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 		return DECLINED;
 	
 	ap_set_module_config(r->request_config, &vhost_ldap_ng_module, reqc);
-	apr_table_t *e = r->subprocess_env;
+	e = r->subprocess_env;
 	if(apr_table_elts(reqc->env)->nelts)
 		r->subprocess_env = apr_table_overlay(r->pool, e, reqc->env);
 #ifdef HAVEPHP
@@ -633,7 +635,7 @@ static int mod_vhost_ldap_translate_name(request_rec *r)
 		return HTTP_INTERNAL_SERVER_ERROR;
 	}
 	
-	alias_t *cursor = NULL;
+	cursor = NULL;
 	//From mod_alias: checking for redirects
 	if(reqc->redirects){
 		cursor = (alias_t *)reqc->redirects->elts;
